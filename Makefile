@@ -16,22 +16,22 @@ CPPFLAGS = -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
 CFLAGS   = -std=c99 -pedantic -Wall -Wextra -Og -ggdb3 ${CPPFLAGS}
 CC       = cc
 
-bf: bf.c
+bq: bq.c
 	${CC} -o $@ ${CFLAGS} $<
 
-bf: Makefile
+bq: Makefile
 
-test: bf
-	[ "`./bf hello.bf`" = "Hello World!" ]
+test: bq
+	[ "`./bq hello.bf`" = "Hello World!" ]
 
 clean:
-	rm -f bf bf.tar.gz
+	rm -f bq brainquack.tar.gz
 
 dist: clean
-	mkdir bf
-	cp Makefile .clang-format compile_flags.txt cvector.h bf.c hello.bf test.bash bf
-	tar -cf bf.tar bf
-	gzip -9 bf.tar
-	rm -rf bf
+	mkdir brainquack
+	cp Makefile .clang-format compile_flags.txt cvector.h bq.c hello.bf test.bash brainquack
+	tar -cf brainquack.tar brainquack
+	gzip -9 brainquack.tar
+	rm -rf brainquack
 
 .PHONY: test clean dist

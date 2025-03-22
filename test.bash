@@ -18,7 +18,7 @@ testing() {
 	output=`mktemp`
 	flags="$2 $3"
 
-	$1 -o $output $flags bf.c
+	$1 -o $output $flags bq.c
 	if [ $? -ne 0 ]; then
 		echo $1 \($flags\): COMPILATION FAILED!
 		rm $output
