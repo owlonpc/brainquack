@@ -114,6 +114,12 @@ main(int argc, char *argv[])
 	cvector(uintptr_t) jmps = NULL;
 	cvector_reserve(code, 16);
 
+	cvector(uintptr_t) putcharpatches = NULL;
+	cvector_reserve(putcharpatches, 64);
+
+	cvector(uintptr_t) getcharpatches = NULL;
+	cvector_reserve(getcharpatches, 32);
+
 #define code_append(snip_)                                       \
 	do {                                                         \
 		size_t snip_size_ = sizeof snip_ / sizeof *snip_ - 1;    \
@@ -171,25 +177,22 @@ main(int argc, char *argv[])
 			break;
 		}
 		case '.': {
-			const char snip[] = "\x48\x89\xc6"  // mov rsi, rax
-								"\x48\x31\xc0"  // xor rax, rax
-								"\x48\xff\xc0"  // inc rax
-								"\x48\x89\xc7"  // mov rdi, rax
-								"\x48\x89\xc2"  // mov rdx, rax
-								"\x0f\x05"      // syscall
-								"\x48\x89\xf0"; // mov rax, rsi
+			const char snip[] = "\x48\x0f\xbe\x38"     // movsx rdi, BYTE PTR [rax]
+								"\x48\x89\xc3"         // mov   rbx, rax
+								"\xe8\x00\x00\x00\x00" // call  rel32
+								"\x48\x89\xd8";        // mov   rax, rbx
 
+			cvector_push_back(putcharpatches, cvector_size(code) + 8);
 			code_append(snip);
 			break;
 		}
 		case ',': {
-			const char snip[] = "\x48\x89\xc6"  // mov rsi, rax
-								"\x48\x31\xc0"  // xor rax, rax
-								"\x48\x31\xff"  // xor rdi, rdi
-								"\x48\xff\xc7"  // inc rdi
-								"\x0f\x05"      // syscall
-								"\x48\x89\xf0"; // mov rax, rsi
+			const char snip[] = "\x48\x89\xc3"         // mov  rbx, rax
+								"\xe8\x00\x00\x00\x00" // call rel32
+								"\x88\x03"             // mov  BYTE PTR [rbx], al
+								"\x48\x89\xd8";        // mov  rax, rbx
 
+			cvector_push_back(getcharpatches, cvector_size(code) + 4);
 			code_append(snip);
 			break;
 		}
@@ -224,6 +227,16 @@ main(int argc, char *argv[])
 	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (!fn)
 		die("could not allocate executable memory:");
+
+	for (size_t i = 0; i < cvector_size(putcharpatches); i++)
+		*(int *)&code[putcharpatches[i]] = (uintptr_t)putchar - ((uintptr_t)fn + putcharpatches[i] + 4);
+
+	cvector_free(putcharpatches);
+
+	for (size_t i = 0; i < cvector_size(getcharpatches); i++)
+		*(int *)&code[getcharpatches[i]] = (uintptr_t)getchar - ((uintptr_t)fn + getcharpatches[i] + 4);
+
+	cvector_free(getcharpatches);
 
 #ifdef PRINT_BUT_DONT_EXEC
 	fwrite(code, cvector_size(code), 1, stdout);
