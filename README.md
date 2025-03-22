@@ -1,4 +1,5 @@
 # brainquack
+Simple x86-64 Linux JIT compiler for the brainfuck programming language. 
 
 ## Compiling
 Simply run `make`. Optionally adjust CFLAGS and such in Makefile.
