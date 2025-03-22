@@ -25,13 +25,6 @@ test: bq
 	[ "`./bq hello.bf`" = "Hello World!" ]
 
 clean:
-	rm -f bq brainquack.tar.gz
+	rm -f bq
 
-dist: clean
-	mkdir brainquack
-	cp Makefile .clang-format compile_flags.txt cvector.h bq.c hello.bf test.bash brainquack
-	tar -cf brainquack.tar brainquack
-	gzip -9 brainquack.tar
-	rm -rf brainquack
-
-.PHONY: test clean dist
+.PHONY: test clean
