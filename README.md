@@ -10,7 +10,7 @@ Run `make test` to test included "Hello World" program using current Makefile se
 Run `test.bash` to test included "Hello World" program using various compilers, libcs, and flags. (Depends on GNU Parallel)
 
 ## Usage
-`./bf [file]`
+`./bq [file]`
 
 ## Dependencies
 All you need is a C99 compiler and make.
