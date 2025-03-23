@@ -128,7 +128,7 @@ main(int argc, char *argv[])
 		cvector_set_size(code, cvector_size(code) + snip_size_); \
 	} while (0)
 
-	code_append("\x48\x89\xf8"); // mov rax, rdi
+	code_append("\x48\x89\xfb"); // mov rbx, rdi
 
 	for (char *s = txt; *s; s++)
 		switch (*s) {
@@ -139,16 +139,16 @@ main(int argc, char *argv[])
 				s[1] == '>' ? n++ : n--;
 
 			if (n == 1)
-				code_append("\x48\xff\xc0"); // inc rax
+				code_append("\x48\xff\xc3"); // inc rbx
 			else if (n == -1)
-				code_append("\x48\xff\xc8"); // dec rax
+				code_append("\x48\xff\xcb"); // dec rbx
 			else if (n > 0) {
 				assert(n <= UCHAR_MAX);
-				code_append("\x48\x83\xc0"); // add rax, imm8
+				code_append("\x48\x83\xc3"); // add rbx, imm8
 				cvector_push_back(code, n);
 			} else if (n < 0) {
 				assert(-n <= UCHAR_MAX);
-				code_append("\x48\x83\xe8"); // sub rax, imm8
+				code_append("\x48\x83\xeb"); // sub rbx, imm8
 				cvector_push_back(code, -n);
 			}
 
@@ -161,44 +161,40 @@ main(int argc, char *argv[])
 				s[1] == '+' ? n++ : n--;
 
 			if (n == 1)
-				code_append("\xfe\x00"); // inc BYTE PTR [rax]
+				code_append("\xfe\x03"); // inc BYTE PTR [rbx]
 			else if (n == -1)
-				code_append("\xfe\x08"); // dec BYTE PTR [rax]
+				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
 			else if (n > 0) {
 				assert(n <= UCHAR_MAX);
-				code_append("\x80\x00"); // add BYTE PTR [rax], imm8
+				code_append("\x80\x03"); // add BYTE PTR [rbx], imm8
 				cvector_push_back(code, n);
 			} else if (n < 0) {
 				assert(-n <= UCHAR_MAX);
-				code_append("\x80\x28"); // sub BYTE PTR [rax], imm8
+				code_append("\x80\x2b"); // sub BYTE PTR [rbx], imm8
 				cvector_push_back(code, -n);
 			}
 
 			break;
 		}
 		case '.': {
-			const char snip[] = "\x48\x0f\xbe\x38"     // movsx rdi, BYTE PTR [rax]
-								"\x48\x89\xc3"         // mov   rbx, rax
-								"\xe8\x00\x00\x00\x00" // call  rel32
-								"\x48\x89\xd8";        // mov   rax, rbx
+			const char snip[] = "\x48\x0f\xbe\x3b"      // movsx rdi, BYTE PTR [rbx]
+								"\xe8\x00\x00\x00\x00"; // call  rel32
 
-			cvector_push_back(putcharpatches, cvector_size(code) + 8);
+			cvector_push_back(putcharpatches, cvector_size(code) + 5);
 			code_append(snip);
 			break;
 		}
 		case ',': {
-			const char snip[] = "\x48\x89\xc3"         // mov  rbx, rax
-								"\xe8\x00\x00\x00\x00" // call rel32
-								"\x88\x03"             // mov  BYTE PTR [rbx], al
-								"\x48\x89\xd8";        // mov  rax, rbx
+			const char snip[] = "\xe8\x00\x00\x00\x00" // call rel32
+								"\x88\x03";            // mov  BYTE PTR [rbx], al
 
-			cvector_push_back(getcharpatches, cvector_size(code) + 4);
+			cvector_push_back(getcharpatches, cvector_size(code) + 1);
 			code_append(snip);
 			break;
 		}
 		case '[': cvector_push_back(jmps, cvector_size(code)); break; // TODO: Implement forward jump-if-zero
 		case ']': {
-			code_append("\x80\x38\x00"); // cmp BYTE PTR [rax], 0
+			code_append("\x80\x3b\x00"); // cmp BYTE PTR [rbx], 0
 
 			int rel = jmps[cvector_size(jmps) - 1] - (cvector_size(code) + 2);
 			cvector_pop_back(jmps);
