@@ -192,22 +192,45 @@ main(int argc, char *argv[])
 			code_append(snip);
 			break;
 		}
-		case '[': cvector_push_back(jmps, cvector_size(code)); break; // TODO: Implement forward jump-if-zero
+		case '[': {
+			const char snip[] = "\x80\x3b\x00"      // cmp BYTE PTR [rbx], 0
+								"\x0f\x84"          // jz rel32
+								"\x90\x90\x90\x90"; // 4x nop
+
+			code_append(snip);
+			cvector_push_back(jmps, cvector_size(code));
+			break;
+		}
 		case ']': {
 			code_append("\x80\x3b\x00"); // cmp BYTE PTR [rbx], 0
 
-			int rel = jmps[cvector_size(jmps) - 1] - (cvector_size(code) + 2);
+			size_t jmp = jmps[cvector_size(jmps) - 1];
 			cvector_pop_back(jmps);
 
-			if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
-				code_append("\x75"); // jnz rel8
-				cvector_push_back(code, rel);
-			} else {
-				code_append("\x0f\x85"); // jnz rel32
+			{
+				int rel = jmp - (cvector_size(code) + 2);
 
-				const char relbytes[5];
-				*(int *)relbytes = rel - 4;
-				code_append(relbytes);
+				if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
+					code_append("\x75"); // jnz rel8
+					cvector_push_back(code, rel);
+				} else {
+					code_append("\x0f\x85"); // jnz rel32
+
+					const char relbytes[5];
+					*(int *)relbytes = rel - 4;
+					code_append(relbytes);
+				}
+			}
+
+			{
+				int rel = cvector_size(code) - jmp;
+
+				if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
+					code[jmp - 6] = 0x74; // jz rel8
+					code[jmp - 5] = rel + 4;
+				} else {
+					*(int *)(code + jmp - 4) = rel; // rel32
+				}
 			}
 
 			break;
