@@ -206,7 +206,7 @@ main(int argc, char *argv[])
 				code_append("\x0f\x85"); // jnz rel32
 
 				const char relbytes[5];
-				*(int *)relbytes = rel + 1;
+				*(int *)relbytes = rel - 4;
 				code_append(relbytes);
 			}
 
