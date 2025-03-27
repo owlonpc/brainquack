@@ -91,6 +91,12 @@ erealloc(void *ptr, size_t size)
 	return p;
 }
 
+static bool
+isop(char c)
+{
+	return strchr("><+-.,[]", c);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -135,8 +141,11 @@ main(int argc, char *argv[])
 		case '>':
 		case '<': {
 			int n = 0;
-			for (s--; s[1] == '>' || s[1] == '<'; s++)
-				s[1] == '>' ? n++ : n--;
+			for (s--; s[1] == '>' || s[1] == '<' || !isop(s[1]); s++)
+				if (s[1] == '>')
+					n++;
+				else if (s[1] == '<')
+					n--;
 
 			if (n == 1)
 				code_append("\x48\xff\xc3"); // inc rbx
@@ -157,8 +166,11 @@ main(int argc, char *argv[])
 		case '+':
 		case '-': {
 			int n = 0;
-			for (s--; s[1] == '+' || s[1] == '-'; s++)
-				s[1] == '+' ? n++ : n--;
+			for (s--; s[1] == '+' || s[1] == '-' || !isop(s[1]); s++)
+				if (s[1] == '+')
+					n++;
+				else if (s[1] == '-')
+					n--;
 
 			if (n == 1)
 				code_append("\xfe\x03"); // inc BYTE PTR [rbx]
