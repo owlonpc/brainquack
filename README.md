@@ -21,3 +21,5 @@ Includes [cvector](https://github.com/eteran/c-vector) single-header library for
 Copyright 2025 owl
 
 [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+
+Included factorial.bf program is licensed under [Creative Commons Attribution-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-sa/4.0/) by Daniel B. Cristofani (https://www.brainfuck.org/)
