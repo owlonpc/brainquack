@@ -14,6 +14,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -22,15 +23,17 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define cvector_clib_malloc emalloc
-#define cvector_clib_calloc ecalloc
 #define cvector_clib_realloc erealloc
 #include "cvector.h"
 
 //#define PRINT_BUT_DONT_EXEC
 
 #define code_trap() code_append("\xcc")
+
+static char *tapeguardpage;
 
 static void
 usage(char *argv0)
@@ -55,7 +58,7 @@ die(const char *fmt, ...)
 		fputc('\n', stderr);
 	}
 
-	exit(1);
+	_Exit(1);
 }
 
 static void *
@@ -65,17 +68,6 @@ emalloc(size_t size)
 
 	if (!(p = malloc(size)))
 		die("emalloc:");
-
-	return p;
-}
-
-static void *
-ecalloc(size_t nmemb, size_t size)
-{
-	void *p;
-
-	if (!(p = calloc(nmemb, size)))
-		die("ecalloc:");
 
 	return p;
 }
@@ -95,6 +87,19 @@ static bool
 isop(char c)
 {
 	return strchr("><+-.,[]", c);
+}
+
+__attribute((noreturn)) static void
+handler(int signum, siginfo_t *si, void *ucontext)
+{
+	(void)signum;
+	(void)ucontext;
+
+	if (si->si_addr >= (void *)tapeguardpage && si->si_addr < (void *)(tapeguardpage + getpagesize()))
+		die("ran out of tape memory");
+
+	SIG_DFL(signum);
+	__builtin_unreachable();
 }
 
 int
@@ -279,9 +284,27 @@ main(int argc, char *argv[])
 	mprotect(fn, cvector_size(code), PROT_EXEC);
 	cvector_free(code);
 
-	char *buf = ecalloc(30000, 1);
-	(*(void (**)(void *))&fn)(buf);
-	// leak buf on purpose
+	size_t tapesize     = 30000;
+	size_t pagesize     = getpagesize();
+	size_t realtapesize = tapesize + (pagesize - (tapesize % pagesize));
+
+	char *tape          = mmap(NULL, realtapesize + pagesize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (!tape)
+		die("could not allocate tape memory:");
+
+	tapeguardpage = tape + realtapesize;
+	if (mprotect(tapeguardpage, pagesize, PROT_NONE) < 0)
+		die("could not protect tape memory guard page:");
+
+	struct sigaction sa;
+	sa.sa_sigaction = handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_SIGINFO;
+	if (sigaction(SIGSEGV, &sa, NULL) < 0)
+		die("could not prepare tape memory guard page:");
+
+	(*(void (**)(void *))&fn)(tape);
+	// leak tape on purpose
 
 	return 0;
 }
