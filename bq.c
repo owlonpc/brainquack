@@ -58,7 +58,7 @@ die(const char *fmt, ...)
 		fputc('\n', stderr);
 	}
 
-	_Exit(1);
+	exit(1);
 }
 
 static void *
@@ -286,7 +286,7 @@ main(int argc, char *argv[])
 
 	size_t tapesize     = 30000;
 	size_t pagesize     = getpagesize();
-	size_t realtapesize = tapesize + (pagesize - (tapesize % pagesize));
+	size_t realtapesize = (tapesize + pagesize - 1) & ~(pagesize - 1);
 
 	char *tape          = mmap(NULL, realtapesize + pagesize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (!tape)
