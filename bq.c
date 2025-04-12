@@ -265,12 +265,12 @@ main(int argc, char *argv[])
 		die("could not allocate executable memory:");
 
 	for (size_t i = 0; i < cvector_size(putcharpatches); i++)
-		*(int *)&code[putcharpatches[i]] = (uintptr_t)putchar - ((uintptr_t)fn + putcharpatches[i] + 4);
+		*(int *)&code[putcharpatches[i]] = (uintptr_t)putchar_unlocked - ((uintptr_t)fn + putcharpatches[i] + 4);
 
 	cvector_free(putcharpatches);
 
 	for (size_t i = 0; i < cvector_size(getcharpatches); i++)
-		*(int *)&code[getcharpatches[i]] = (uintptr_t)getchar - ((uintptr_t)fn + getcharpatches[i] + 4);
+		*(int *)&code[getcharpatches[i]] = (uintptr_t)getchar_unlocked - ((uintptr_t)fn + getcharpatches[i] + 4);
 
 	cvector_free(getcharpatches);
 
