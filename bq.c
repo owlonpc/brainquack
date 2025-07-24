@@ -197,6 +197,7 @@ main(int argc, char *argv[])
 				cvector_push_back(instrs, instr);
 				break;
 			}
+#endif
 
 			// [>] or [<]
 			if (len >= 2 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_JUMP_RIGHT) {
@@ -205,7 +206,6 @@ main(int argc, char *argv[])
 				cvector_push_back(instrs, instr);
 				break;
 			}
-#endif
 
 			instr.op = OP_JUMP_LEFT;
 			cvector_push_back(instrs, instr);
@@ -342,8 +342,38 @@ main(int argc, char *argv[])
 			__builtin_unreachable();
 			break;
 		case OP_MOVE_UNTIL:
-			// TODO: moving until zero cell found
-			__builtin_unreachable();
+			if (instr.arg == 1) {
+				const char snip[] = "\x80\x3b\x00" // cmp BYTE PTR [rbx], 0
+									"\x74\x05"     // je +5
+									"\x48\xff\xc3" // inc rbx
+									"\xeb\xf6";    // jmp -10
+
+				code_append(snip);
+			} else if (instr.arg == -1) {
+				const char snip[] = "\x80\x3b\x00" // cmp BYTE PTR [rbx], 0
+									"\x74\x05"     // je +5
+									"\x48\xff\xcb" // dec rbx
+									"\xeb\xf6";    // jmp -10
+
+				code_append(snip);
+			} else if (instr.arg > 1) {
+				const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
+									"\x74\x06"         // je +6
+									"\x48\x83\xc3\x00" // add rbx, imm8
+									"\xeb\xf5";        // jmp -11
+
+				code_append(snip);
+				code[cvector_size(code) - 3] = instr.arg;
+			} else if (instr.arg < 1) {
+				const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
+									"\x74\x06"         // je +6
+									"\x48\x83\xeb\x00" // sub rbx, imm8
+									"\xeb\xf5";        // jmp -11
+
+				code_append(snip);
+				code[cvector_size(code) - 3] = -instr.arg;
+			}
+
 			break;
 		}
 	}
