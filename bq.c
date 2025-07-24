@@ -187,7 +187,6 @@ main(int argc, char *argv[])
 				break;
 			}
 
-#if 0
 			// [->+<] or [-<+>]
 			if (len >= 5 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_ADD && instrs[len - 2].arg == 1 &&
 			    instrs[len - 3].op == OP_MOVE && instrs[len - 4].op == OP_ADD && instrs[len - 4].arg == -1 &&
@@ -197,7 +196,6 @@ main(int argc, char *argv[])
 				cvector_push_back(instrs, instr);
 				break;
 			}
-#endif
 
 			// [>] or [<]
 			if (len >= 2 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_JUMP_RIGHT) {
@@ -337,10 +335,15 @@ main(int argc, char *argv[])
 		case OP_CLEAR:
 			code_append("\xc6\x03\x00"); // mov BYTE PTR [rbx], 0
 			break;
-		case OP_ADD_TO:
-			// TODO: adding current cell to offset cell and clearing current
-			__builtin_unreachable();
+		case OP_ADD_TO: {
+			const char snip[] = "\x8a\x03"      // mov al, BYTE PTR [rbx]
+								"\x00\x43\x00"  // add BYTE PTR [rbx + n], al
+								"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
+
+			code_append(snip);
+			code[cvector_size(code) - 4] = instr.arg;
 			break;
+		}
 		case OP_MOVE_UNTIL:
 			if (instr.arg == 1) {
 				const char snip[] = "\x80\x3b\x00" // cmp BYTE PTR [rbx], 0
