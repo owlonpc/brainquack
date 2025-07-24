@@ -35,6 +35,13 @@
 
 static char *tapeguardpage;
 
+typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
+
+typedef struct {
+	Opcode op;
+	int    arg;
+} Instr;
+
 static void
 usage(char *argv0)
 {
@@ -119,11 +126,102 @@ main(int argc, char *argv[])
 	fread(txt, st.st_size, 1, f);
 	fclose(f);
 
+	cvector(Instr) instrs = NULL;
+	cvector_reserve(instrs, 128);
+
+	for (char *s = txt; *s; s++) {
+		Instr instr;
+		switch (*s) {
+		case '>':
+		case '<': {
+			int n = 0;
+			for (s--; s[1] == '>' || s[1] == '<' || !isop(s[1]); s++)
+				if (s[1] == '>')
+					n++;
+				else if (s[1] == '<')
+					n--;
+
+			if (n != 0) {
+				instr = (Instr){ OP_MOVE, n };
+				cvector_push_back(instrs, instr);
+			}
+
+			break;
+		}
+		case '+':
+		case '-': {
+			int n = 0;
+			for (s--; s[1] == '+' || s[1] == '-' || !isop(s[1]); s++)
+				if (s[1] == '+')
+					n++;
+				else if (s[1] == '-')
+					n--;
+
+			if (n != 0) {
+				instr = (Instr){ OP_ADD, n };
+				cvector_push_back(instrs, instr);
+			}
+
+			break;
+		}
+		case '.':
+			instr.op = OP_OUTPUT;
+			cvector_push_back(instrs, instr);
+			break;
+		case ',':
+			instr.op = OP_INPUT;
+			cvector_push_back(instrs, instr);
+			break;
+		case '[':
+			instr.op = OP_JUMP_RIGHT;
+			cvector_push_back(instrs, instr);
+			break;
+		case ']': {
+			size_t len = cvector_size(instrs);
+
+			// [-] or [+]
+			if (len >= 2 && instrs[len - 1].op == OP_ADD && instrs[len - 1].arg & 1 && instrs[len - 2].op == OP_JUMP_RIGHT) {
+				cvector_set_size(instrs, len - 2);
+				instr.op = OP_CLEAR;
+				cvector_push_back(instrs, instr);
+				break;
+			}
+
+#if 0
+			// [->+<] or [-<+>]
+			if (len >= 5 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_ADD && instrs[len - 2].arg == 1 &&
+			    instrs[len - 3].op == OP_MOVE && instrs[len - 4].op == OP_ADD && instrs[len - 4].arg == -1 &&
+			    instrs[len - 1].arg == -instrs[len - 3].arg && instrs[len - 5].op == OP_JUMP_RIGHT) {
+				cvector_set_size(instrs, len - 5);
+				instr = (Instr){ OP_ADD_TO, instrs[len - 3].arg };
+				cvector_push_back(instrs, instr);
+				break;
+			}
+
+			// [>] or [<]
+			if (len >= 2 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_JUMP_RIGHT) {
+				cvector_set_size(instrs, len - 2);
+				instr = (Instr){ OP_MOVE_UNTIL, instrs[len - 1].arg };
+				cvector_push_back(instrs, instr);
+				break;
+			}
+#endif
+
+			instr.op = OP_JUMP_LEFT;
+			cvector_push_back(instrs, instr);
+			break;
+		}
+		default: break;
+		}
+	}
+
+	free(txt);
+
 	cvector(char) code = NULL;
 	cvector_reserve(code, 512);
 
 	cvector(uintptr_t) jmps = NULL;
-	cvector_reserve(code, 16);
+	cvector_reserve(jmps, 16);
 
 	cvector(uintptr_t) putcharpatches = NULL;
 	cvector_reserve(putcharpatches, 64);
@@ -141,59 +239,43 @@ main(int argc, char *argv[])
 
 	code_append("\x48\x89\xfb"); // mov rbx, rdi
 
-	for (char *s = txt; *s; s++)
-		switch (*s) {
-		case '>':
-		case '<': {
-			int n = 0;
-			for (s--; s[1] == '>' || s[1] == '<' || !isop(s[1]); s++)
-				if (s[1] == '>')
-					n++;
-				else if (s[1] == '<')
-					n--;
+	for (size_t i = 0; i < cvector_size(instrs); i++) {
+		Instr instr = instrs[i];
 
-			if (n == 1)
+		switch (instr.op) {
+		case OP_MOVE:
+			if (instr.arg == 1)
 				code_append("\x48\xff\xc3"); // inc rbx
-			else if (n == -1)
+			else if (instr.arg == -1)
 				code_append("\x48\xff\xcb"); // dec rbx
-			else if (n > 0) {
-				assert(n <= UCHAR_MAX);
+			else if (instr.arg > 0) {
+				assert(instr.arg <= UCHAR_MAX);
 				code_append("\x48\x83\xc3"); // add rbx, imm8
-				cvector_push_back(code, n);
-			} else if (n < 0) {
-				assert(-n <= UCHAR_MAX);
+				cvector_push_back(code, instr.arg);
+			} else if (instr.arg < 0) {
+				assert(-instr.arg <= UCHAR_MAX);
 				code_append("\x48\x83\xeb"); // sub rbx, imm8
-				cvector_push_back(code, -n);
+				cvector_push_back(code, -instr.arg);
 			}
 
 			break;
-		}
-		case '+':
-		case '-': {
-			int n = 0;
-			for (s--; s[1] == '+' || s[1] == '-' || !isop(s[1]); s++)
-				if (s[1] == '+')
-					n++;
-				else if (s[1] == '-')
-					n--;
-
-			if (n == 1)
+		case OP_ADD:
+			if (instr.arg == 1)
 				code_append("\xfe\x03"); // inc BYTE PTR [rbx]
-			else if (n == -1)
+			else if (instr.arg == -1)
 				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
-			else if (n > 0) {
-				assert(n <= UCHAR_MAX);
+			else if (instr.arg > 0) {
+				assert(instr.arg <= UCHAR_MAX);
 				code_append("\x80\x03"); // add BYTE PTR [rbx], imm8
-				cvector_push_back(code, n);
-			} else if (n < 0) {
-				assert(-n <= UCHAR_MAX);
+				cvector_push_back(code, instr.arg);
+			} else if (instr.arg < 0) {
+				assert(-instr.arg <= UCHAR_MAX);
 				code_append("\x80\x2b"); // sub BYTE PTR [rbx], imm8
-				cvector_push_back(code, -n);
+				cvector_push_back(code, -instr.arg);
 			}
 
 			break;
-		}
-		case '.': {
+		case OP_OUTPUT: {
 			const char snip[] = "\x48\x0f\xbe\x3b"      // movsx rdi, BYTE PTR [rbx]
 								"\xe8\x00\x00\x00\x00"; // call  rel32
 
@@ -201,7 +283,7 @@ main(int argc, char *argv[])
 			code_append(snip);
 			break;
 		}
-		case ',': {
+		case OP_INPUT: {
 			const char snip[] = "\xe8\x00\x00\x00\x00" // call rel32
 								"\x88\x03";            // mov  BYTE PTR [rbx], al
 
@@ -209,7 +291,7 @@ main(int argc, char *argv[])
 			code_append(snip);
 			break;
 		}
-		case '[': {
+		case OP_JUMP_RIGHT: {
 			const char snip[] = "\x80\x3b\x00"      // cmp BYTE PTR [rbx], 0
 								"\x0f\x84"          // jz rel32
 								"\x90\x90\x90\x90"; // 4x nop
@@ -218,7 +300,7 @@ main(int argc, char *argv[])
 			cvector_push_back(jmps, cvector_size(code));
 			break;
 		}
-		case ']': {
+		case OP_JUMP_LEFT: {
 			code_append("\x80\x3b\x00"); // cmp BYTE PTR [rbx], 0
 
 			size_t jmp = jmps[cvector_size(jmps) - 1];
@@ -252,10 +334,21 @@ main(int argc, char *argv[])
 
 			break;
 		}
-		default: break;
+		case OP_CLEAR:
+			code_append("\xc6\x03\x00"); // mov BYTE PTR [rbx], 0
+			break;
+		case OP_ADD_TO:
+			// TODO: adding current cell to offset cell and clearing current
+			__builtin_unreachable();
+			break;
+		case OP_MOVE_UNTIL:
+			// TODO: moving until zero cell found
+			__builtin_unreachable();
+			break;
 		}
+	}
 
-	free(txt);
+	cvector_free(instrs);
 	cvector_free(jmps);
 
 	code_append("\xc3"); // ret
