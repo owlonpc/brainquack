@@ -257,22 +257,23 @@ main(int argc, char *argv[])
 			}
 
 			break;
-		case OP_ADD:
-			if (instr.arg == 1)
+		case OP_ADD: {
+			short n = instr.arg % 256;
+
+			if (n == 1)
 				code_append("\xfe\x03"); // inc BYTE PTR [rbx]
-			else if (instr.arg == -1)
+			else if (n == -1)
 				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
-			else if (instr.arg > 0) {
-				assert(instr.arg <= UCHAR_MAX);
+			else if (n > 0) {
 				code_append("\x80\x03"); // add BYTE PTR [rbx], imm8
-				cvector_push_back(code, instr.arg);
-			} else if (instr.arg < 0) {
-				assert(-instr.arg <= UCHAR_MAX);
+				cvector_push_back(code, n);
+			} else if (n < 0) {
 				code_append("\x80\x2b"); // sub BYTE PTR [rbx], imm8
-				cvector_push_back(code, -instr.arg);
+				cvector_push_back(code, -n);
 			}
 
 			break;
+		}
 		case OP_OUTPUT: {
 			const char snip[] = "\x48\x0f\xbe\x3b"      // movsx rdi, BYTE PTR [rbx]
 								"\xe8\x00\x00\x00\x00"; // call  rel32
