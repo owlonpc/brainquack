@@ -40,7 +40,7 @@ ConstructorInitializerIndentWidth: 14
 ContinuationIndentWidth: 8
 Cpp11BracedListStyle: false
 DeriveLineEnding: true
-DerivePointerAlignment: true
+DerivePointerAlignment: false
 DisableFormat: false
 EmptyLineAfterAccessModifier: Never
 EmptyLineBeforeAccessModifier: Never
