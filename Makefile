@@ -22,7 +22,7 @@ bq: bq.c
 bq: Makefile
 
 test: bq
-	find tests -name "*.bf" | parallel '[ "`./bq {}`" = "`cat {}.stdout`" ] || (echo {}: test failed!; exit 1)'
+	@find tests -name "*.bf" | parallel '[ "`cat {}.stdin 2>/dev/null | ./bq {}`" = "`cat {}.stdout`" ] || (echo {}: test failed!; exit 1)'
 
 clean:
 	rm -f bq
