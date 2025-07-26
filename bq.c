@@ -247,15 +247,26 @@ main(int argc, char *argv[])
 			else if (instr.arg == -1)
 				code_append("\x48\xff\xcb"); // dec rbx
 			else if (instr.arg > 0) {
-				assert(instr.arg <= UCHAR_MAX);
-				code_append("\x48\x83\xc3"); // add rbx, imm8
-				cvector_push_back(code, instr.arg);
-			} else if (instr.arg < 0) {
-				assert(-instr.arg <= UCHAR_MAX);
-				code_append("\x48\x83\xeb"); // sub rbx, imm8
-				cvector_push_back(code, -instr.arg);
-			}
+				unsigned int n = instr.arg;
 
+				if (n <= UCHAR_MAX) {
+					code_append("\x48\x83\xc3"); // add rbx, imm8
+					cvector_push_back(code, n);
+				} else {
+					code_append("\x48\x81\xc3\x00\x00\x00\x00"); // add rbx, imm32
+					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+				}
+			} else if (instr.arg < 0) {
+				unsigned int n = -instr.arg;
+
+				if (n <= UCHAR_MAX) {
+					code_append("\x48\x83\xeb"); // sub rbx, imm8
+					cvector_push_back(code, n);
+				} else {
+					code_append("\x48\x81\xeb\x00\x00\x00\x00"); // sub rbx, imm32
+					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+				}
+			}
 			break;
 		case OP_ADD: {
 			short n = instr.arg % 256;
