@@ -215,7 +215,7 @@ main(int argc, char *argv[])
 
 	free(txt);
 
-	cvector(char) code = NULL;
+	cvector(unsigned char) code = NULL;
 	cvector_reserve(code, 512);
 
 	cvector(uintptr_t) jmps = NULL;
@@ -250,8 +250,8 @@ main(int argc, char *argv[])
 				unsigned int n = instr.arg;
 
 				if (n <= UCHAR_MAX) {
-					code_append("\x48\x83\xc3"); // add rbx, imm8
-					cvector_push_back(code, n);
+					code_append("\x48\x83\xc3\x00"); // add rbx, imm8
+					code[cvector_size(code) - 1] = n;
 				} else {
 					code_append("\x48\x81\xc3\x00\x00\x00\x00"); // add rbx, imm32
 					*(unsigned int *)(code + cvector_size(code) - 4) = n;
@@ -260,8 +260,9 @@ main(int argc, char *argv[])
 				unsigned int n = -instr.arg;
 
 				if (n <= UCHAR_MAX) {
-					code_append("\x48\x83\xeb"); // sub rbx, imm8
-					cvector_push_back(code, n);
+					code_append("\x48\x83\xeb\x00"); // sub rbx, imm8
+					code[cvector_size(code) - 1] = n;
+
 				} else {
 					code_append("\x48\x81\xeb\x00\x00\x00\x00"); // sub rbx, imm32
 					*(unsigned int *)(code + cvector_size(code) - 4) = n;
@@ -276,11 +277,11 @@ main(int argc, char *argv[])
 			else if (n == -1)
 				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
 			else if (n > 0) {
-				code_append("\x80\x03"); // add BYTE PTR [rbx], imm8
-				cvector_push_back(code, n);
+				code_append("\x80\x03\x00"); // add BYTE PTR [rbx], imm8
+				code[cvector_size(code) - 1] = n;
 			} else if (n < 0) {
-				code_append("\x80\x2b"); // sub BYTE PTR [rbx], imm8
-				cvector_push_back(code, -n);
+				code_append("\x80\x2b\x00"); // sub BYTE PTR [rbx], imm8
+				code[cvector_size(code) - 1] = -n;
 			}
 
 			break;
@@ -320,14 +321,11 @@ main(int argc, char *argv[])
 				int rel = jmp - (cvector_size(code) + 2);
 
 				if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
-					code_append("\x75"); // jnz rel8
-					cvector_push_back(code, rel);
+					code_append("\x75\x00"); // jnz rel8
+					code[cvector_size(code) - 1] = rel;
 				} else {
-					code_append("\x0f\x85"); // jnz rel32
-
-					const char relbytes[5];
-					*(int *)relbytes = rel - 4;
-					code_append(relbytes);
+					code_append("\x0f\x85\x00\x00\x00\x00"); // jnz rel32
+					*(int *)(code + cvector_size(code) - 4) = rel - 4;
 				}
 			}
 
