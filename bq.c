@@ -355,6 +355,7 @@ main(int argc, char *argv[])
 								"\x00\x43\x00"  // add BYTE PTR [rbx + n], al
 								"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
 
+			assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
 			code_append(snip);
 			code[cvector_size(code) - 4] = instr.arg;
 			break;
@@ -380,6 +381,7 @@ main(int argc, char *argv[])
 									"\x48\x83\xc3\x00" // add rbx, imm8
 									"\xeb\xf5";        // jmp -11
 
+				assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
 				code_append(snip);
 				code[cvector_size(code) - 3] = instr.arg;
 			} else if (instr.arg < 1) {
@@ -388,6 +390,7 @@ main(int argc, char *argv[])
 									"\x48\x83\xeb\x00" // sub rbx, imm8
 									"\xeb\xf5";        // jmp -11
 
+				assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
 				code_append(snip);
 				code[cvector_size(code) - 3] = -instr.arg;
 			}
