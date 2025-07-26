@@ -22,7 +22,7 @@ bq: bq.c
 bq: Makefile
 
 test: bq
-	[ "`./bq hello.bf`" = "Hello World!" ]
+	find tests -name "*.bf" | parallel '[ "`./bq {}`" = "`cat {}.stdout`" ] || (echo {}: test failed!; exit 1)'
 
 clean:
 	rm -f bq
