@@ -31,6 +31,8 @@
 
 //#define PRINT_BUT_DONT_EXEC
 
+#define MAX(a, b) (a > b ? a : b)
+
 #define code_trap() code_append("\xcc")
 
 static char *tapeguardpage;
@@ -127,7 +129,7 @@ main(int argc, char *argv[])
 	fclose(f);
 
 	cvector(Instr) instrs = NULL;
-	cvector_reserve(instrs, 128);
+	cvector_reserve(instrs, (size_t)st.st_size);
 
 	for (char *s = txt; *s; s++) {
 		Instr instr;
@@ -216,16 +218,16 @@ main(int argc, char *argv[])
 	free(txt);
 
 	cvector(unsigned char) code = NULL;
-	cvector_reserve(code, 512);
+	cvector_reserve(code, cvector_size(instrs) * 4);
 
 	cvector(uintptr_t) jmps = NULL;
-	cvector_reserve(jmps, 16);
+	cvector_reserve(jmps, MAX(cvector_size(instrs) / 100, 16));
 
 	cvector(uintptr_t) putcharpatches = NULL;
-	cvector_reserve(putcharpatches, 64);
+	cvector_reserve(putcharpatches, MAX(cvector_size(instrs) / 200, 64));
 
 	cvector(uintptr_t) getcharpatches = NULL;
-	cvector_reserve(getcharpatches, 32);
+	cvector_reserve(getcharpatches, MAX(cvector_size(instrs) / 500, 32));
 
 #define code_append(snip_)                                       \
 	do {                                                         \
