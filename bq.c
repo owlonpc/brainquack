@@ -386,38 +386,59 @@ main(int argc, char *argv[])
 		case OP_MOVE_UNTIL:
 			if (instr.arg == 1) {
 				const char snip[] = "\x80\x3b\x00" // cmp BYTE PTR [rbx], 0
-									"\x74\x05"     // je +5
+									"\x74\x05"     // je   5
 									"\x48\xff\xc3" // inc rbx
 									"\xeb\xf6";    // jmp -10
 
 				code_append(snip);
 			} else if (instr.arg == -1) {
 				const char snip[] = "\x80\x3b\x00" // cmp BYTE PTR [rbx], 0
-									"\x74\x05"     // je +5
+									"\x74\x05"     // je  +5
 									"\x48\xff\xcb" // dec rbx
 									"\xeb\xf6";    // jmp -10
 
 				code_append(snip);
 			} else if (instr.arg > 1) {
-				const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
-									"\x74\x06"         // je +6
-									"\x48\x83\xc3\x00" // add rbx, imm8
-									"\xeb\xf5";        // jmp -11
+				unsigned int n = instr.arg;
 
-				assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
-				code_append(snip);
-				code[cvector_size(code) - 3] = instr.arg;
-			} else if (instr.arg < 1) {
-				const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
-									"\x74\x06"         // je +6
-									"\x48\x83\xeb\x00" // sub rbx, imm8
-									"\xeb\xf5";        // jmp -11
+				if (n <= UCHAR_MAX) {
+					const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
+										"\x74\x06"         // je  +6
+										"\x48\x83\xc3\x00" // add rbx, imm8
+										"\xeb\xf5";        // jmp -11
 
-				assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
-				code_append(snip);
-				code[cvector_size(code) - 3] = -instr.arg;
+					code_append(snip);
+					code[cvector_size(code) - 3] = n;
+				} else {
+					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
+										"\x74\x09"                     // je  +9
+										"\x48\x81\xc3\x00\x00\x00\x00" // add rbx, imm32
+										"\xeb\xf2";                    // jmp -14
+
+					code_append(snip);
+					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+				}
+			} else if (instr.arg < -1) {
+				unsigned int n = -instr.arg;
+
+				if (n <= UCHAR_MAX) {
+					const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
+										"\x74\x06"         // je  +6
+										"\x48\x83\xeb\x00" // sub rbx, imm8
+										"\xeb\xf5";        // jmp -11
+
+					code_append(snip);
+					code[cvector_size(code) - 3] = n;
+				} else {
+					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
+										"\x74\x09"                     // je  +9
+										"\x48\x81\xeb\x00\x00\x00\x00" // sub rbx, imm32
+										"\xeb\xf2";                    // jmp -14
+
+					code_append(snip);
+					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+				}
 			}
-
 			break;
 		}
 	}
