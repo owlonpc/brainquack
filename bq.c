@@ -374,13 +374,21 @@ main(int argc, char *argv[])
 			code_append("\xc6\x03\x00"); // mov BYTE PTR [rbx], 0
 			break;
 		case OP_ADD_TO: {
-			const char snip[] = "\x8a\x03"      // mov al, BYTE PTR [rbx]
-								"\x00\x43\x00"  // add BYTE PTR [rbx + n], al
-								"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
+			if (instr.arg >= CHAR_MIN && instr.arg <= CHAR_MAX) {
+				const char snip[] = "\x8a\x03"      // mov al, BYTE PTR [rbx]
+									"\x00\x43\x00"  // add BYTE PTR [rbx + disp8], al
+									"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
 
-			assert(instr.arg <= CHAR_MAX && instr.arg >= CHAR_MIN); // TODO
-			code_append(snip);
-			code[cvector_size(code) - 4] = instr.arg;
+				code_append(snip);
+				code[cvector_size(code) - 4] = instr.arg;
+			} else {
+				const char snip[] = "\x8a\x03"                 // mov al, BYTE PTR [rbx]
+									"\x00\x83\x00\x00\x00\x00" // add BYTE PTR [rbx + disp32], al
+									"\xc6\x03\x00";            // mov BYTE PTR [rbx], 0
+
+				code_append(snip);
+				*(int *)(code + cvector_size(code) - 7) = instr.arg;
+			}
 			break;
 		}
 		case OP_MOVE_UNTIL:
