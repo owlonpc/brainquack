@@ -223,11 +223,11 @@ main(int argc, char *argv[])
 	cvector(uintptr_t) jmps = NULL;
 	cvector_reserve(jmps, MAX(cvector_size(instrs) / 100, 16));
 
-	cvector(uintptr_t) putcharpatches = NULL;
-	cvector_reserve(putcharpatches, MAX(cvector_size(instrs) / 200, 64));
+	cvector(uintptr_t) overflowpatches = NULL;
+	cvector_reserve(overflowpatches, MAX(cvector_size(instrs) / 200, 64));
 
-	cvector(uintptr_t) getcharpatches = NULL;
-	cvector_reserve(getcharpatches, MAX(cvector_size(instrs) / 500, 32));
+	cvector(uintptr_t) uflowpatches = NULL;
+	cvector_reserve(uflowpatches, MAX(cvector_size(instrs) / 500, 32));
 
 #define code_append(snip_)                                       \
 	do {                                                         \
@@ -237,7 +237,13 @@ main(int argc, char *argv[])
 		cvector_set_size(code, cvector_size(code) + snip_size_); \
 	} while (0)
 
-	code_append("\x48\x89\xfb"); // mov rbx, rdi
+	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
+						"\x49\xbe\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r14, imm64
+						"\x48\x89\xfb";                            // mov rbx, rdi
+
+	code_append(snip);
+	*(void **)(code + cvector_size(code) - 21) = stdin;
+	*(void **)(code + cvector_size(code) - 11) = stdout;
 
 	for (size_t i = 0; i < cvector_size(instrs); i++) {
 		Instr instr = instrs[i];
@@ -289,18 +295,35 @@ main(int argc, char *argv[])
 			break;
 		}
 		case OP_OUTPUT: {
-			const char snip[] = "\x48\x0f\xbe\x3b"      // movsx rdi, BYTE PTR [rbx]
-								"\xe8\x00\x00\x00\x00"; // call  rel32
+			const char snip[] = "\x40\x8a\x33"         // mov   sil, BYTE PTR [rbx]
+								"\x49\x8b\x46\x28"     // mov   rax, QWORD PTR [r14 + 0x28]
+								"\x49\x3b\x46\x20"     // cmp   rax, QWORD PTR [r14 + 0x20]
+								"\x75\x0e"             // jne   +14
+								"\x4c\x89\xf7"         // mov   rdi, r14
+								"\x40\x0f\xbe\xf6"     // movsx esi, sil
+								"\xe8\x00\x00\x00\x00" // call  rel32
+								"\xeb\x0b"             // jmp   +11
+								"\x48\x8d\x50\x01"     // lea   rdx, [rax + 0x1]
+								"\x49\x89\x56\x28"     // mov   QWORD PTR [r14 + 0x28], rdx
+								"\x40\x88\x30";        // mov   BYTE PTR [rax], sil
 
-			cvector_push_back(putcharpatches, cvector_size(code) + 5);
+			cvector_push_back(overflowpatches, cvector_size(code) + 21);
 			code_append(snip);
 			break;
 		}
 		case OP_INPUT: {
-			const char snip[] = "\xe8\x00\x00\x00\x00" // call rel32
+			const char snip[] = "\x49\x8b\x45\x08"     // mov  rax, QWORD PTR [r13 + 0x8]
+								"\x49\x3b\x45\x10"     // cmp  rax, QWORD PTR [r13 + 0x10]
+								"\x75\x0a"             // jne  +10
+								"\x4c\x89\xef"         // mov  rdi, r13
+								"\xe8\x00\x00\x00\x00" // call rel32
+								"\xeb\x0a"             // jmp  +10
+								"\x48\x8d\x50\x01"     // lea  rdx, [rax + 0x1]
+								"\x49\x89\x55\x08"     // mov  QWORD PTR [r13 + 0x8], rdx
+								"\x8a\x00"             // mov  al, BYTE PTR [rax]
 								"\x88\x03";            // mov  BYTE PTR [rbx], al
 
-			cvector_push_back(getcharpatches, cvector_size(code) + 1);
+			cvector_push_back(uflowpatches, cvector_size(code) + 14);
 			code_append(snip);
 			break;
 		}
@@ -411,15 +434,17 @@ main(int argc, char *argv[])
 	if (!fn)
 		die("could not allocate executable memory:");
 
-	for (size_t i = 0; i < cvector_size(putcharpatches); i++)
-		*(int *)&code[putcharpatches[i]] = (uintptr_t)putchar_unlocked - ((uintptr_t)fn + putcharpatches[i] + 4);
+	extern int __overflow(FILE *, int);
+	for (size_t i = 0; i < cvector_size(overflowpatches); i++)
+		*(int *)&code[overflowpatches[i]] = (uintptr_t)__overflow - ((uintptr_t)fn + overflowpatches[i] + 4);
 
-	cvector_free(putcharpatches);
+	cvector_free(overflowpatches);
 
-	for (size_t i = 0; i < cvector_size(getcharpatches); i++)
-		*(int *)&code[getcharpatches[i]] = (uintptr_t)getchar_unlocked - ((uintptr_t)fn + getcharpatches[i] + 4);
+	extern int __uflow(FILE *);
+	for (size_t i = 0; i < cvector_size(uflowpatches); i++)
+		*(int *)&code[uflowpatches[i]] = (uintptr_t)__uflow - ((uintptr_t)fn + uflowpatches[i] + 4);
 
-	cvector_free(getcharpatches);
+	cvector_free(uflowpatches);
 
 #ifdef PRINT_BUT_DONT_EXEC
 	fwrite(code, cvector_size(code), 1, stdout);
