@@ -1,32 +1,20 @@
 #!/usr/bin/env python3
 
-import glob
-import subprocess
-import os
+import glob, subprocess, os
 
-test_files = glob.glob("tests/*.bf")
-max_len = max(len(f) for f in test_files)
+files = glob.glob("tests/*.bf")
+pad = max(len(f) for f in files) + 1
 
-for test_file in test_files:
-    stdin_file = test_file + ".stdin"
-    stdout_file = test_file + ".stdout"
-    
-    stdin_data = ""
-    if os.path.exists(stdin_file):
-        with open(stdin_file, "r") as f:
-            stdin_data = f.read()
-    
-    with open(stdout_file, "r") as f:
-        expected = f.read()
-    
-    result = subprocess.run(["./bq", test_file], input=stdin_data, 
-                          text=True, capture_output=True)
-        
-    if result.stdout == expected:
-        status = "\033[42mPASS\033[0m"
-        print(f"{test_file + ':':<{max_len + 1}} {status}")
-    else:
-        status = "\033[41mFAIL\033[0m"
-        print(f"{test_file + ':':<{max_len + 1}} {status}")
+for f in files:
+    stdout = open(f + ".stdout")
+    stdin = open(f + ".stdin", "r") if os.path.exists(f + ".stdin") else open(os.devnull)
+
+    result = subprocess.run(["./bq", f], input=stdin.read(), text=True, capture_output=True)
+    expected = stdout.read()
+    passed = result.stdout == expected
+
+    status = "\033[42mPASS\033[0m" if passed else "\033[41mFAIL\033[0m"
+    print(f"{f + ':':<{pad}} {status}")
+    if not passed:
         print(f"    expected: {repr(expected)}")
         print(f"    got:      {repr(result.stdout)}")
