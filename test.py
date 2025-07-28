@@ -16,5 +16,5 @@ for f in files:
     status = "\033[42mPASS\033[0m" if passed else "\033[41mFAIL\033[0m"
     print(f"{f + ':':<{pad}} {status}")
     if not passed:
-        print(f"    expected: {repr(expected)}")
-        print(f"    got:      {repr(result.stdout)}")
+        print(f"  expected: {repr(expected)}")
+        print(f"  got:      {repr(result.stdout)}")
