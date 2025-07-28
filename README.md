@@ -5,7 +5,9 @@ Simple x86-64 Linux JIT compiler for the brainfuck programming language.
 Simply run `make`. Optionally adjust CFLAGS and such in Makefile.
 
 ## Tests
-Run `make test` to test included programs using current Makefile settings. (Depends on GNU Parallel)
+Run `./test.py`.
+
+Run `make test` to (re)compile and test at once.
 
 ## Usage
 `./bq [file]`

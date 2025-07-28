@@ -22,7 +22,7 @@ bq: bq.c
 bq: Makefile
 
 test: bq
-	@find tests -name "*.bf" | parallel '[ "`cat {}.stdin 2>/dev/null | ./bq {}`" = "`cat {}.stdout`" ] || (echo {}: test failed!; exit 1)'
+	./test.py
 
 clean:
 	rm -f bq
