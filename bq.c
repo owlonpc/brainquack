@@ -35,6 +35,10 @@
 
 #define code_trap() code_append("\xcc")
 
+#define likely(x) (__builtin_expect(!!(x), 1))
+#define unlikely(x) (__builtin_expect(!!(x), 0))
+#define likeliness(x, l) (__builtin_expect_with_probability(!!(x), 0, l))
+
 static char *tapeguardpage;
 
 typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
@@ -75,7 +79,7 @@ emalloc(size_t size)
 {
 	void *p;
 
-	if (!(p = malloc(size)))
+	if unlikely (!(p = malloc(size)))
 		die("emalloc:");
 
 	return p;
@@ -86,7 +90,7 @@ erealloc(void *ptr, size_t size)
 {
 	void *p;
 
-	if (!(p = realloc(ptr, size)))
+	if unlikely (!(p = realloc(ptr, size)))
 		die("erealloc:");
 
 	return p;
@@ -104,7 +108,7 @@ handler(int signum, siginfo_t *si, void *ucontext)
 	(void)signum;
 	(void)ucontext;
 
-	if (si->si_addr >= (void *)tapeguardpage && si->si_addr < (void *)(tapeguardpage + getpagesize()))
+	if likely (si->si_addr >= (void *)tapeguardpage && si->si_addr < (void *)(tapeguardpage + getpagesize()))
 		die("ran out of tape memory");
 
 	SIG_DFL(signum);
@@ -114,11 +118,11 @@ handler(int signum, siginfo_t *si, void *ucontext)
 int
 main(int argc, char *argv[])
 {
-	if (argc != 2)
+	if unlikely (argc != 2)
 		usage(argv[0]);
 
 	FILE *f = fopen(argv[1], "r");
-	if (!f)
+	if unlikely (!f)
 		die("cannot access '%s':", argv[1]);
 
 	struct stat st;
@@ -131,7 +135,7 @@ main(int argc, char *argv[])
 	cvector(Instr) instrs = NULL;
 	cvector_reserve(instrs, (size_t)st.st_size);
 
-	for (char *s = txt; *s; s++) {
+	for (char *s = txt; likely(*s); s++) {
 		Instr instr;
 		switch (*s) {
 		case '>':
@@ -143,7 +147,7 @@ main(int argc, char *argv[])
 				else if (s[1] == '<')
 					n--;
 
-			if (n != 0) {
+			if likely (n != 0) {
 				instr = (Instr){ OP_MOVE, n };
 				cvector_push_back(instrs, instr);
 			}
@@ -159,7 +163,7 @@ main(int argc, char *argv[])
 				else if (s[1] == '-')
 					n--;
 
-			if (n != 0) {
+			if likely (n != 0) {
 				instr = (Instr){ OP_ADD, n };
 				cvector_push_back(instrs, instr);
 			}
@@ -245,7 +249,7 @@ main(int argc, char *argv[])
 	*(void **)(code + cvector_size(code) - 21) = stdin;
 	*(void **)(code + cvector_size(code) - 11) = stdout;
 
-	for (size_t i = 0; i < cvector_size(instrs); i++) {
+	for (size_t i = 0; likely(i < cvector_size(instrs)); i++) {
 		Instr instr = instrs[i];
 
 		switch (instr.op) {
@@ -257,7 +261,7 @@ main(int argc, char *argv[])
 			else if (instr.arg > 0) {
 				unsigned int n = instr.arg;
 
-				if (n <= UCHAR_MAX) {
+				if likely (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xc3\x00"); // add rbx, imm8
 					code[cvector_size(code) - 1] = n;
 				} else {
@@ -270,7 +274,6 @@ main(int argc, char *argv[])
 				if (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xeb\x00"); // sub rbx, imm8
 					code[cvector_size(code) - 1] = n;
-
 				} else {
 					code_append("\x48\x81\xeb\x00\x00\x00\x00"); // sub rbx, imm32
 					*(unsigned int *)(code + cvector_size(code) - 4) = n;
@@ -348,7 +351,7 @@ main(int argc, char *argv[])
 			{
 				int rel = jmp - (cvector_size(code) + 2);
 
-				if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
+				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
 					code_append("\x75\x00"); // jnz rel8
 					code[cvector_size(code) - 1] = rel;
 				} else {
@@ -360,7 +363,7 @@ main(int argc, char *argv[])
 			{
 				int rel = cvector_size(code) - jmp;
 
-				if (rel >= CHAR_MIN && rel <= CHAR_MAX) {
+				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
 					code[jmp - 6] = 0x74; // jz rel8
 					code[jmp - 5] = rel + 4;
 				} else {
@@ -374,7 +377,7 @@ main(int argc, char *argv[])
 			code_append("\xc6\x03\x00"); // mov BYTE PTR [rbx], 0
 			break;
 		case OP_ADD_TO: {
-			if (instr.arg >= CHAR_MIN && instr.arg <= CHAR_MAX) {
+			if likely (instr.arg >= CHAR_MIN && instr.arg <= CHAR_MAX) {
 				const char snip[] = "\x8a\x03"      // mov al, BYTE PTR [rbx]
 									"\x00\x43\x00"  // add BYTE PTR [rbx + disp8], al
 									"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
@@ -409,7 +412,7 @@ main(int argc, char *argv[])
 			} else if (instr.arg > 1) {
 				unsigned int n = instr.arg;
 
-				if (n <= UCHAR_MAX) {
+				if likely (n <= UCHAR_MAX) {
 					const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
 										"\x74\x06"         // je  +6
 										"\x48\x83\xc3\x00" // add rbx, imm8
@@ -429,7 +432,7 @@ main(int argc, char *argv[])
 			} else if (instr.arg < -1) {
 				unsigned int n = -instr.arg;
 
-				if (n <= UCHAR_MAX) {
+				if likely (n <= UCHAR_MAX) {
 					const char snip[] = "\x80\x3b\x00"     // cmp BYTE PTR [rbx], 0
 										"\x74\x06"         // je  +6
 										"\x48\x83\xeb\x00" // sub rbx, imm8
@@ -460,7 +463,7 @@ main(int argc, char *argv[])
 	code_append("\xc3"); // ret
 
 	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (!fn)
+	if unlikely (!fn)
 		die("could not allocate executable memory:");
 
 	extern int __overflow(FILE *, int);
@@ -490,18 +493,18 @@ main(int argc, char *argv[])
 	size_t realtapesize = (tapesize + pagesize - 1) & ~(pagesize - 1);
 
 	char *tape          = mmap(NULL, realtapesize + pagesize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (!tape)
+	if unlikely (!tape)
 		die("could not allocate tape memory:");
 
 	tapeguardpage = tape + realtapesize;
-	if (mprotect(tapeguardpage, pagesize, PROT_NONE) < 0)
+	if unlikely (mprotect(tapeguardpage, pagesize, PROT_NONE) < 0)
 		die("could not protect tape memory guard page:");
 
 	struct sigaction sa;
 	sa.sa_sigaction = handler;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_SIGINFO;
-	if (sigaction(SIGSEGV, &sa, NULL) < 0)
+	if unlikely (sigaction(SIGSEGV, &sa, NULL) < 0)
 		die("could not prepare tape memory guard page:");
 
 	(*(void (**)(void *))&fn)(tape);
