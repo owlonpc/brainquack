@@ -40,7 +40,7 @@
 #define unlikely(x) (__builtin_expect(!!(x), 0))
 #define likeliness(x, l) (__builtin_expect_with_probability(!!(x), 0, l))
 
-static char *tapeguardpage;
+static char *tapeguardpages[2];
 
 typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
 
@@ -56,7 +56,7 @@ usage(char *argv0)
 	exit(1);
 }
 
-static void
+__attribute((noreturn)) static void
 die(const char *fmt, ...)
 {
 	va_list ap;
@@ -109,8 +109,11 @@ handler(int signum, siginfo_t *si, void *ucontext)
 	(void)signum;
 	(void)ucontext;
 
-	if likely (si->si_addr >= (void *)tapeguardpage && si->si_addr < (void *)(tapeguardpage + getpagesize()))
-		die("ran out of tape memory");
+	if likely (si->si_addr >= (void *)tapeguardpages[1] && si->si_addr < (void *)(tapeguardpages[1] + getpagesize()))
+		die("tape memory overflow detected");
+
+	if likely (si->si_addr >= (void *)tapeguardpages[0] && si->si_addr < (void *)(tapeguardpages[0] + getpagesize()))
+		die("tape memory underflow detected");
 
 	SIG_DFL(signum);
 	__builtin_unreachable();
@@ -493,13 +496,19 @@ main(int argc, char *argv[])
 	size_t pagesize     = getpagesize();
 	size_t realtapesize = (tapesize + pagesize - 1) & ~(pagesize - 1);
 
-	char *tape          = mmap(NULL, realtapesize + pagesize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	char *tape          = mmap(NULL, realtapesize + pagesize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if unlikely (!tape)
 		die("could not allocate tape memory:");
 
-	tapeguardpage = tape + realtapesize;
-	if unlikely (mprotect(tapeguardpage, pagesize, PROT_NONE) < 0)
-		die("could not protect tape memory guard page:");
+	tape += pagesize;
+
+	tapeguardpages[1] = tape + realtapesize;
+	if unlikely (mprotect(tapeguardpages[1], pagesize, PROT_NONE) < 0)
+		die("could not protect tape memory overflow guard page:");
+
+	tapeguardpages[0] = tape - pagesize;
+	if unlikely (mprotect(tapeguardpages[0], pagesize, PROT_NONE) < 0)
+		die("could not protect tape memory underflow guard page:");
 
 	struct sigaction sa;
 	sa.sa_sigaction = handler;
