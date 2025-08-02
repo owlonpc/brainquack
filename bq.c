@@ -13,6 +13,7 @@
    limitations under the License. */
 
 #include <assert.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -121,16 +122,16 @@ main(int argc, char *argv[])
 	if unlikely (argc != 2)
 		usage(argv[0]);
 
-	FILE *f = fopen(argv[1], "r");
-	if unlikely (!f)
+	int fd = open(argv[1], O_RDONLY);
+	if unlikely (fd < 0)
 		die("cannot access '%s':", argv[1]);
 
 	struct stat st;
-	fstat(fileno(f), &st);
+	fstat(fd, &st);
 
 	char *txt = emalloc(st.st_size);
-	fread(txt, st.st_size, 1, f);
-	fclose(f);
+	read(fd, txt, st.st_size);
+	close(fd);
 
 	cvector(Instr) instrs = NULL;
 	cvector_reserve(instrs, (size_t)st.st_size);
