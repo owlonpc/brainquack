@@ -342,7 +342,7 @@ main(int argc, char *argv[])
 		case OP_JUMP_LEFT: {
 			code_append("\x80\x3b\x00"); // cmp BYTE PTR [rbx], 0
 
-			if (cvector_size(jmps) == 0)
+			if unlikely (cvector_size(jmps) == 0)
 				die("mismatched ]");
 
 			size_t jmp = jmps[cvector_size(jmps) - 1];
@@ -454,7 +454,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (cvector_size(jmps) != 0)
+	if unlikely (cvector_size(jmps) != 0)
 		die("unterminated [");
 
 	cvector_free(instrs);
