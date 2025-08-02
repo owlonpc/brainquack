@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-CPPFLAGS = -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
+CPPFLAGS = -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
 #CFLAGS   = -std=c99 -pedantic -Wall -Wextra -Og -ggdb3 ${CPPFLAGS}
 CFLAGS   = -std=c99 -pedantic -Wall -Wextra -O3 ${CPPFLAGS}
 CC       = cc
