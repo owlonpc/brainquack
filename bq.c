@@ -33,8 +33,6 @@
 
 //#define PRINT_BUT_DONT_EXEC
 
-#define MAX(a, b) (a > b ? a : b)
-
 #define code_trap() code_append("\xcc")
 
 #define likely(x) (__builtin_expect(!!(x), 1))
@@ -50,6 +48,12 @@ typedef struct {
 	Opcode op;
 	int    arg;
 } Instr;
+
+static inline size_t
+max(size_t a, size_t b)
+{
+	return a > b ? a : b;
+}
 
 static void
 usage(char *argv0)
@@ -254,16 +258,16 @@ main(int argc, char *argv[])
 	free(txt);
 
 	cvector(unsigned char) code = NULL;
-	cvector_reserve(code, MAX(cvector_size(instrs) * 5, 128));
+	cvector_reserve(code, max(cvector_size(instrs) * 5, 128));
 
 	cvector(uintptr_t) jmps = NULL;
-	cvector_reserve(jmps, MAX(cvector_size(instrs) / 20, 16));
+	cvector_reserve(jmps, max(cvector_size(instrs) / 20, 16));
 
 	cvector(uintptr_t) overflowpatches = NULL;
-	cvector_reserve(overflowpatches, MAX(cvector_size(instrs) / 100, 64));
+	cvector_reserve(overflowpatches, max(cvector_size(instrs) / 100, 64));
 
 	cvector(uintptr_t) uflowpatches = NULL;
-	cvector_reserve(uflowpatches, MAX(cvector_size(instrs) / 200, 32));
+	cvector_reserve(uflowpatches, max(cvector_size(instrs) / 200, 32));
 
 #define code_append(snip_)                                       \
 	do {                                                         \
