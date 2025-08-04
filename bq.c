@@ -24,6 +24,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/ucontext.h>
 #include <unistd.h>
 
 #define cvector_clib_malloc emalloc
@@ -40,7 +41,8 @@
 #define unlikely(x) (__builtin_expect(!!(x), 0))
 #define likeliness(x, l) (__builtin_expect_with_probability(!!(x), 0, l))
 
-static char *tapeguardpages[2];
+static char  *tape, *tapeguardpages[2];
+static size_t realtapesize;
 
 typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
 
@@ -107,10 +109,25 @@ __attribute((noreturn)) static void
 handler(int signum, siginfo_t *si, void *ucontext)
 {
 	(void)signum;
-	(void)ucontext;
 
-	if likely (si->si_addr >= (void *)tapeguardpages[1] && si->si_addr < (void *)(tapeguardpages[1] + getpagesize()))
-		die("tape memory overflow detected");
+	size_t pagesize = getpagesize();
+
+	if likely (si->si_addr >= (void *)tapeguardpages[1] && si->si_addr < (void *)(tapeguardpages[1] + pagesize)) {
+		char *oldtape = tape;
+		tape = (char *)mremap(tape - pagesize, realtapesize + pagesize * 2, realtapesize + pagesize * 2, MREMAP_MAYMOVE);
+		if (tape == MAP_FAILED)
+			die("could not resize tape memory:");
+
+		tape += pagesize;
+		realtapesize *= 2;
+
+		if likely (tape != oldtape) {
+			ucontext_t *uctx                 = ucontext;
+			uctx->uc_mcontext.gregs[REG_RAX] = (greg_t)tape + uctx->uc_mcontext.gregs[REG_RAX] - (uintptr_t)oldtape;
+		}
+
+		SIG_IGN(signum);
+	}
 
 	if likely (si->si_addr >= (void *)tapeguardpages[0] && si->si_addr < (void *)(tapeguardpages[0] + getpagesize()))
 		die("tape memory underflow detected");
@@ -492,11 +509,11 @@ main(int argc, char *argv[])
 	mprotect(fn, cvector_size(code), PROT_EXEC);
 	cvector_free(code);
 
-	size_t tapesize     = 30000;
-	size_t pagesize     = getpagesize();
-	size_t realtapesize = (tapesize + pagesize - 1) & ~(pagesize - 1);
+	size_t tapesize = 30000;
+	size_t pagesize = getpagesize();
+	realtapesize    = (tapesize + pagesize - 1) & ~(pagesize - 1);
 
-	char *tape          = mmap(NULL, realtapesize + pagesize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	tape            = mmap(NULL, realtapesize + pagesize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if unlikely (!tape)
 		die("could not allocate tape memory:");
 
