@@ -105,7 +105,7 @@ isop(char c)
 	return strchr("><+-.,[]", c);
 }
 
-__attribute((noreturn)) static void
+static void
 handler(int signum, siginfo_t *si, void *ucontext)
 {
 	(void)signum;
@@ -113,8 +113,11 @@ handler(int signum, siginfo_t *si, void *ucontext)
 	size_t pagesize = getpagesize();
 
 	if likely (si->si_addr >= (void *)tapeguardpages[1] && si->si_addr < (void *)(tapeguardpages[1] + pagesize)) {
+		munmap(tapeguardpages[0], pagesize);
+		munmap(tapeguardpages[1], pagesize);
+
 		char *oldtape = tape;
-		tape = (char *)mremap(tape - pagesize, realtapesize + pagesize * 2, realtapesize + pagesize * 2, MREMAP_MAYMOVE);
+		tape          = (char *)mremap(tape, realtapesize, realtapesize * 2 + pagesize * 2, MREMAP_MAYMOVE);
 		if (tape == MAP_FAILED)
 			die("could not resize tape memory:");
 
@@ -123,10 +126,18 @@ handler(int signum, siginfo_t *si, void *ucontext)
 
 		if likely (tape != oldtape) {
 			ucontext_t *uctx                 = ucontext;
-			uctx->uc_mcontext.gregs[REG_RAX] = (greg_t)tape + uctx->uc_mcontext.gregs[REG_RAX] - (uintptr_t)oldtape;
+			uctx->uc_mcontext.gregs[REG_RBX] = (greg_t)tape + uctx->uc_mcontext.gregs[REG_RBX] - (uintptr_t)oldtape;
 		}
 
-		SIG_IGN(signum);
+		tapeguardpages[1] = tape + realtapesize;
+		if unlikely (mprotect(tapeguardpages[1], pagesize, PROT_NONE) < 0)
+			die("could not protect tape memory overflow guard page:");
+
+		tapeguardpages[0] = tape - pagesize;
+		if unlikely (mprotect(tapeguardpages[0], pagesize, PROT_NONE) < 0)
+			die("could not protect tape memory underflow guard page:");
+
+		return;
 	}
 
 	if likely (si->si_addr >= (void *)tapeguardpages[0] && si->si_addr < (void *)(tapeguardpages[0] + getpagesize()))
