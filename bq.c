@@ -293,14 +293,16 @@ main(int argc, char *argv[])
 		};                                                                                   \
 		uintptr_t cur = (uintptr_t)(code + cvector_size(code));                              \
 		size_t    pad = (16 - (cur & 15)) & 15;                                              \
+		size_t    off = cvector_size(code);                                                  \
+		cvector_reserve(code, off + pad);                                                    \
+		size_t i = 0;                                                                        \
 		while (pad > 0) {                                                                    \
-			size_t      nopsize = pad > 10 ? 10 : pad;                                       \
-			const char *nop     = nops[nopsize - 1];                                         \
-			cvector_reserve(code, cvector_size(code) + nopsize);                             \
-			memcpy(code + cvector_size(code), nop, nopsize);                                 \
-			cvector_set_size(code, cvector_size(code) + nopsize);                            \
+			size_t nopsize = pad > 10 ? 10 : pad;                                            \
+			memcpy(code + off + i, nops[nopsize - 1], nopsize);                              \
+			i += nopsize;                                                                    \
 			pad -= nopsize;                                                                  \
 		}                                                                                    \
+		cvector_set_size(code, off + i);                                                     \
 	} while (0)
 
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
