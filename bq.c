@@ -395,7 +395,7 @@ main(int argc, char *argv[])
 		case OP_JUMP_RIGHT: {
 			const char snip[] = "\x80\x3b\x00"      // cmp BYTE PTR [rbx], 0
 								"\x0f\x84"          // jz rel32
-								"\x90\x90\x90\x90"; // 4x nop
+								"\x0f\x1f\x40\x00"; // nop DWORD PTR [eax+0x0]
 
 			code_align();
 			code_append(snip);
