@@ -277,6 +277,32 @@ main(int argc, char *argv[])
 		cvector_set_size(code, cvector_size(code) + snip_size_); \
 	} while (0)
 
+#define code_align()                                                                         \
+	do {                                                                                     \
+		static const char *nops[] = {                                                        \
+			"\x90",                                    /* nop */                             \
+			"\x66\x90",                                /* xchg ax,ax */                      \
+			"\x0f\x1f\x00",                            /* nop DWORD PTR [eax] */             \
+			"\x0f\x1f\x40\x00",                        /* nop DWORD PTR [eax+0x0] */         \
+			"\x0f\x1f\x44\x00\x00",                    /* nop DWORD PTR [eax+eax*1+0x0] */   \
+			"\x66\x0f\x1f\x44\x00\x00",                /* nop WORD PTR [eax+eax*1+0x0] */    \
+			"\x0f\x1f\x80\x00\x00\x00\x00",            /* nop DWORD PTR [eax+0x0] */         \
+			"\x0f\x1f\x84\x00\x00\x00\x00\x00",        /* nop DWORD PTR [eax+eax*1+0x0] */   \
+			"\x66\x0f\x1f\x84\x00\x00\x00\x00\x00",    /* nop WORD PTR [eax+eax*1+0x0] */    \
+			"\x66\x2e\x0f\x1f\x84\x00\x00\x00\x00\x00" /* nop WORD PTR cs:[eax+eax*1+0x0] */ \
+		};                                                                                   \
+		uintptr_t cur = (uintptr_t)(code + cvector_size(code));                              \
+		size_t    pad = (16 - (cur & 15)) & 15;                                              \
+		while (pad > 0) {                                                                    \
+			size_t      nopsize = pad > 10 ? 10 : pad;                                       \
+			const char *nop     = nops[nopsize - 1];                                         \
+			cvector_reserve(code, cvector_size(code) + nopsize);                             \
+			memcpy(code + cvector_size(code), nop, nopsize);                                 \
+			cvector_set_size(code, cvector_size(code) + nopsize);                            \
+			pad -= nopsize;                                                                  \
+		}                                                                                    \
+	} while (0)
+
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
 						"\x49\xbe\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r14, imm64
 						"\x48\x89\xfb";                            // mov rbx, rdi
@@ -371,6 +397,7 @@ main(int argc, char *argv[])
 								"\x0f\x84"          // jz rel32
 								"\x90\x90\x90\x90"; // 4x nop
 
+			code_align();
 			code_append(snip);
 			cvector_push_back(jmps, cvector_size(code));
 			break;
