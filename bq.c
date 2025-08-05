@@ -399,7 +399,8 @@ main(int argc, char *argv[])
 								"\x0f\x84"          // jz rel32
 								"\x0f\x1f\x40\x00"; // nop DWORD PTR [eax+0x0]
 
-			code_align();
+			if (cvector_size(jmps) < 2)
+				code_align();
 			code_append(snip);
 			cvector_push_back(jmps, cvector_size(code));
 			break;
@@ -424,6 +425,9 @@ main(int argc, char *argv[])
 					*(int *)(code + cvector_size(code) - 4) = rel - 4;
 				}
 			}
+
+			if (cvector_size(jmps) < 1)
+				code_align();
 
 			{
 				int rel = cvector_size(code) - jmp;
