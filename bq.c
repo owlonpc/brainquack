@@ -289,20 +289,20 @@ main(int argc, char *argv[])
 		cvector_set_size(code, cvector_size(code) + snip_size_); \
 	} while (0)
 
-#define code_align()                                            \
-	do {                                                        \
-		uintptr_t cur = (uintptr_t)(code + cvector_size(code)); \
-		size_t    pad = (16 - (cur & 15)) & 15;                 \
-		size_t    off = cvector_size(code);                     \
-		cvector_reserve(code, off + pad);                       \
-		size_t i = 0;                                           \
-		while (pad > 0) {                                       \
-			size_t nopsize = pad > 10 ? 10 : pad;               \
-			memcpy(code + off + i, nops[nopsize - 1], nopsize); \
-			i += nopsize;                                       \
-			pad -= nopsize;                                     \
-		}                                                       \
-		cvector_set_size(code, off + i);                        \
+#define code_align(align)                                                  \
+	do {                                                                   \
+		uintptr_t cur = (uintptr_t)(code + cvector_size(code));            \
+		size_t    pad = ((align) - (cur & ((align) - 1))) & ((align) - 1); \
+		size_t    off = cvector_size(code);                                \
+		cvector_reserve(code, off + pad);                                  \
+		size_t i = 0;                                                      \
+		while (pad > 0) {                                                  \
+			size_t nopsize = pad > 10 ? 10 : pad;                          \
+			memcpy(code + off + i, nops[nopsize - 1], nopsize);            \
+			i += nopsize;                                                  \
+			pad -= nopsize;                                                \
+		}                                                                  \
+		cvector_set_size(code, off + i);                                   \
 	} while (0)
 
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
@@ -312,6 +312,9 @@ main(int argc, char *argv[])
 	code_append(snip);
 	*(void **)(code + cvector_size(code) - 21) = stdin;
 	*(void **)(code + cvector_size(code) - 11) = stdout;
+
+	size_t icacheline                          = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+	code_align(icacheline);
 
 	for (size_t i = 0; likely(i < cvector_size(instrs)); i++) {
 		Instr instr = instrs[i];
@@ -399,8 +402,7 @@ main(int argc, char *argv[])
 								"\x0f\x84"          // jz rel32
 								"\x0f\x1f\x40\x00"; // nop DWORD PTR [eax+0x0]
 
-			if (cvector_size(jmps) < 2)
-				code_align();
+			code_align(icacheline >> cvector_size(jmps));
 			code_append(snip);
 			cvector_push_back(jmps, cvector_size(code));
 			break;
@@ -426,8 +428,7 @@ main(int argc, char *argv[])
 				}
 			}
 
-			if (cvector_size(jmps) < 1)
-				code_align();
+			code_align(icacheline >> cvector_size(jmps));
 
 			{
 				int rel = cvector_size(code) - jmp;
