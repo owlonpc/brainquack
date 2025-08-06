@@ -44,6 +44,19 @@ static size_t realtapesize;
 
 typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
 
+static const char *const nops[] = {
+	"\x90",                                    // nop
+	"\x66\x90",                                // xchg ax,ax
+	"\x0f\x1f\x00",                            // nop DWORD PTR [eax]
+	"\x0f\x1f\x40\x00",                        // nop DWORD PTR [eax+0x0]
+	"\x0f\x1f\x44\x00\x00",                    // nop DWORD PTR [eax+eax*1+0x0]
+	"\x66\x0f\x1f\x44\x00\x00",                // nop WORD PTR [eax+eax*1+0x0]
+	"\x0f\x1f\x80\x00\x00\x00\x00",            // nop DWORD PTR [eax+0x0]
+	"\x0f\x1f\x84\x00\x00\x00\x00\x00",        // nop DWORD PTR [eax+eax*1+0x0]
+	"\x66\x0f\x1f\x84\x00\x00\x00\x00\x00",    // nop WORD PTR [eax+eax*1+0x0]
+	"\x66\x2e\x0f\x1f\x84\x00\x00\x00\x00\x00" // nop WORD PTR cs:[eax+eax*1+0x0]
+};
+
 typedef struct {
 	Opcode op;
 	int    arg;
@@ -276,32 +289,20 @@ main(int argc, char *argv[])
 		cvector_set_size(code, cvector_size(code) + snip_size_); \
 	} while (0)
 
-#define code_align()                                                                         \
-	do {                                                                                     \
-		static const char *nops[] = {                                                        \
-			"\x90",                                    /* nop */                             \
-			"\x66\x90",                                /* xchg ax,ax */                      \
-			"\x0f\x1f\x00",                            /* nop DWORD PTR [eax] */             \
-			"\x0f\x1f\x40\x00",                        /* nop DWORD PTR [eax+0x0] */         \
-			"\x0f\x1f\x44\x00\x00",                    /* nop DWORD PTR [eax+eax*1+0x0] */   \
-			"\x66\x0f\x1f\x44\x00\x00",                /* nop WORD PTR [eax+eax*1+0x0] */    \
-			"\x0f\x1f\x80\x00\x00\x00\x00",            /* nop DWORD PTR [eax+0x0] */         \
-			"\x0f\x1f\x84\x00\x00\x00\x00\x00",        /* nop DWORD PTR [eax+eax*1+0x0] */   \
-			"\x66\x0f\x1f\x84\x00\x00\x00\x00\x00",    /* nop WORD PTR [eax+eax*1+0x0] */    \
-			"\x66\x2e\x0f\x1f\x84\x00\x00\x00\x00\x00" /* nop WORD PTR cs:[eax+eax*1+0x0] */ \
-		};                                                                                   \
-		uintptr_t cur = (uintptr_t)(code + cvector_size(code));                              \
-		size_t    pad = (16 - (cur & 15)) & 15;                                              \
-		size_t    off = cvector_size(code);                                                  \
-		cvector_reserve(code, off + pad);                                                    \
-		size_t i = 0;                                                                        \
-		while (pad > 0) {                                                                    \
-			size_t nopsize = pad > 10 ? 10 : pad;                                            \
-			memcpy(code + off + i, nops[nopsize - 1], nopsize);                              \
-			i += nopsize;                                                                    \
-			pad -= nopsize;                                                                  \
-		}                                                                                    \
-		cvector_set_size(code, off + i);                                                     \
+#define code_align()                                            \
+	do {                                                        \
+		uintptr_t cur = (uintptr_t)(code + cvector_size(code)); \
+		size_t    pad = (16 - (cur & 15)) & 15;                 \
+		size_t    off = cvector_size(code);                     \
+		cvector_reserve(code, off + pad);                       \
+		size_t i = 0;                                           \
+		while (pad > 0) {                                       \
+			size_t nopsize = pad > 10 ? 10 : pad;               \
+			memcpy(code + off + i, nops[nopsize - 1], nopsize); \
+			i += nopsize;                                       \
+			pad -= nopsize;                                     \
+		}                                                       \
+		cvector_set_size(code, off + i);                        \
 	} while (0)
 
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
