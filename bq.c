@@ -38,6 +38,9 @@
 #define likely(x) (__builtin_expect(!!(x), 1))
 #define unlikely(x) (__builtin_expect(!!(x), 0))
 #define likeliness(x, l) (__builtin_expect_with_probability(!!(x), 0, l))
+#define hot __attribute((hot))
+#define cold __attribute((cold))
+#define noreturn __attribute((noreturn))
 
 static char  *tape, *tapestart, *tapeguardpages[2];
 static size_t realtapesize;
@@ -68,14 +71,14 @@ max(size_t a, size_t b)
 	return a > b ? a : b;
 }
 
-static void
+static void cold
 usage(char *argv0)
 {
 	fprintf(stderr, "usage: %s [file]\n", argv0);
 	exit(1);
 }
 
-__attribute((noreturn)) static void
+static void noreturn cold
 die(const char *fmt, ...)
 {
 	va_list ap;
@@ -116,7 +119,7 @@ erealloc(void *ptr, size_t size)
 	return p;
 }
 
-static bool
+static bool hot
 isop(char c)
 {
 	return strchr("><+-.,[]", c);
@@ -125,8 +128,6 @@ isop(char c)
 static void
 handler(int signum, siginfo_t *si, void *ucontext)
 {
-	(void)signum;
-
 	size_t pagesize = getpagesize();
 	void  *addr     = si->si_addr;
 
