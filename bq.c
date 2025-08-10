@@ -422,7 +422,7 @@ main(int argc, char *argv[])
 				case OP_MOVE_UNTIL: cost += 10; break;
 				}
 
-			code_align(icacheline >> (cost / 150));
+			code_align(icacheline >> ((cvector_size(jmps) + 1) * cost / 50));
 			code_append(snip);
 			cvector_push_back(jmps, cvector_size(code));
 			break;
