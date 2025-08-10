@@ -291,6 +291,8 @@ main(int argc, char *argv[])
 
 #define code_align(align)                                                  \
 	do {                                                                   \
+		if (align <= 1)                                                    \
+			break;                                                         \
 		uintptr_t cur = (uintptr_t)(code + cvector_size(code));            \
 		size_t    pad = ((align) - (cur & ((align) - 1))) & ((align) - 1); \
 		size_t    off = cvector_size(code);                                \
@@ -402,7 +404,25 @@ main(int argc, char *argv[])
 								"\x0f\x84"          // jz rel32
 								"\x0f\x1f\x40\x00"; // nop DWORD PTR [eax+0x0]
 
-			code_align(icacheline >> cvector_size(jmps));
+			size_t cost         = 0;
+			size_t jmpstraverse = cvector_size(jmps) + 1;
+			for (size_t j = i; jmpstraverse && likely(j < cvector_size(instrs)); j++)
+				switch (instrs[j].op) {
+				case OP_MOVE: cost += 3; break;
+				case OP_ADD: cost += 1; break;
+				case OP_OUTPUT: cost += 40; break;
+				case OP_INPUT: cost += 35; break;
+				case OP_JUMP_RIGHT: cost += 10; break;
+				case OP_JUMP_LEFT:
+					cost += 8;
+					jmpstraverse--;
+					break;
+				case OP_CLEAR: cost += 2; break;
+				case OP_ADD_TO: cost += 10; break;
+				case OP_MOVE_UNTIL: cost += 10; break;
+				}
+
+			code_align(icacheline >> (cost / 150));
 			code_append(snip);
 			cvector_push_back(jmps, cvector_size(code));
 			break;
@@ -427,8 +447,6 @@ main(int argc, char *argv[])
 					*(int *)(code + cvector_size(code) - 4) = rel - 4;
 				}
 			}
-
-			code_align(icacheline >> cvector_size(jmps));
 
 			{
 				int rel = cvector_size(code) - jmp;
