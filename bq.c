@@ -32,17 +32,7 @@
 #include "cvector.h"
 
 //#define PRINT_BUT_DONT_EXEC
-#define EVAL_LIMIT 5003
-/*
-	NOTE(bleb1k): squares.bf problems related to EVAL_LIMIT
-	# crashes python tests:
-	612
-	674
-	# makes squares.bf fail for some reason
-	613 - 616
-	675 - 678
-	4998 - 5002
-*/
+#define EVAL_LIMIT 5000
 
 #define code_trap() code_append("\xcc")
 
@@ -324,7 +314,8 @@ evaluate(cvector(Instr) instrs, CodegenOptions *cg_opts)
 	finished = true;
 
 end_eval:;
-	write(STDOUT_FILENO, output_acc, cvector_size(output_acc));
+	cvector_push_back(output_acc, '\0');
+	printf("%s", output_acc);
 	cvector_free(output_acc);
 
 	*cg_opts = (CodegenOptions){
