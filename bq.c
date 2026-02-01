@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -22,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/ucontext.h>
@@ -125,6 +127,27 @@ isop(char c)
 	return strchr("><+-.,[]", c);
 }
 
+static bool
+isstdincomplete(struct stat *st)
+{
+	if (isatty(STDIN_FILENO))
+		return false;
+
+	if (fstat(STDIN_FILENO, st) < 0)
+		return false;
+
+	if (S_ISREG(st->st_mode))
+		return true;
+
+	if (S_ISFIFO(st->st_mode)) {
+		struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+		poll(&pfd, 1, 0);
+		return pfd.revents & POLLHUP;
+	}
+
+	return false;
+}
+
 static void
 handler(int signum, siginfo_t *si, void *ucontext)
 {
@@ -180,6 +203,24 @@ main(int argc, char *argv[])
 	char *txt = emalloc(st.st_size);
 	read(fd, txt, st.st_size);
 	close(fd);
+
+	bool  stdincomplete = isstdincomplete(&st);
+	char *stdintxt      = NULL;
+
+	if (stdincomplete) {
+		if (S_ISREG(st.st_mode)) {
+			stdintxt = emalloc(st.st_size);
+			read(STDIN_FILENO, stdintxt, st.st_size);
+		} else if (S_ISFIFO(st.st_mode)) {
+			int n;
+			ioctl(STDIN_FILENO, FIONREAD, &n);
+			stdintxt = emalloc(n + 1);
+			read(STDIN_FILENO, stdintxt, n);
+			stdintxt[n] = '\0';
+		} else {
+			stdincomplete = false;
+		}
+	}
 
 	cvector(Instr) instrs = NULL;
 	cvector_reserve(instrs, (size_t)st.st_size);
@@ -308,6 +349,11 @@ main(int argc, char *argv[])
 		cvector_set_size(code, off + i);                                   \
 	} while (0)
 
+	if (stdincomplete) {
+		code_append("\x49\xbf\x00\x00\x00\x00\x00\x00\x00\x00"); // movabs r15, imm64
+		*(void **)(code + cvector_size(code) - 8) = stdintxt;
+	}
+
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
 						"\x49\xbe\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r14, imm64
 						"\x48\x89\xfb";                            // mov rbx, rdi
@@ -385,19 +431,26 @@ main(int argc, char *argv[])
 			break;
 		}
 		case OP_INPUT: {
-			const char snip[] = "\x49\x8b\x45\x08"     // mov  rax, QWORD PTR [r13 + 0x8]
-								"\x49\x3b\x45\x10"     // cmp  rax, QWORD PTR [r13 + 0x10]
-								"\x75\x0a"             // jne  +10
-								"\x4c\x89\xef"         // mov  rdi, r13
-								"\xe8\x00\x00\x00\x00" // call rel32
-								"\xeb\x0a"             // jmp  +10
-								"\x48\x8d\x50\x01"     // lea  rdx, [rax + 0x1]
-								"\x49\x89\x55\x08"     // mov  QWORD PTR [r13 + 0x8], rdx
-								"\x8a\x00"             // mov  al, BYTE PTR [rax]
-								"\x88\x03";            // mov  BYTE PTR [rbx], al
+			if (!stdincomplete) {
+				const char snip[] = "\x49\x8b\x45\x08"     // mov  rax, QWORD PTR [r13 + 0x8]
+									"\x49\x3b\x45\x10"     // cmp  rax, QWORD PTR [r13 + 0x10]
+									"\x75\x0a"             // jne  +10
+									"\x4c\x89\xef"         // mov  rdi, r13
+									"\xe8\x00\x00\x00\x00" // call rel32
+									"\xeb\x0a"             // jmp  +10
+									"\x48\x8d\x50\x01"     // lea  rdx, [rax + 0x1]
+									"\x49\x89\x55\x08"     // mov  QWORD PTR [r13 + 0x8], rdx
+									"\x8a\x00"             // mov  al, BYTE PTR [rax]
+									"\x88\x03";            // mov  BYTE PTR [rbx], al
 
-			cvector_push_back(uflowpatches, cvector_size(code) + 14);
-			code_append(snip);
+				cvector_push_back(uflowpatches, cvector_size(code) + 14);
+				code_append(snip);
+			} else {
+				const char snip[] = "\x41\x8a\07"   // mov al, BYTE PTR [r15]
+									"\x88\x03"      // mov BYTE PTR [rbx], al
+									"\x49\xff\xc7"; // inc r15
+				code_append(snip);
+			}
 			break;
 		}
 		case OP_JUMP_RIGHT: {
