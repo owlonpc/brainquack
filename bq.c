@@ -32,6 +32,17 @@
 #include "cvector.h"
 
 //#define PRINT_BUT_DONT_EXEC
+#define EVAL_LIMIT 5003
+/*
+	NOTE(bleb1k): squares.bf problems related to EVAL_LIMIT
+	# crashes python tests:
+	612
+	674
+	# makes squares.bf fail for some reason
+	613 - 616
+	675 - 678
+	4998 - 5002
+*/
 
 #define code_trap() code_append("\xcc")
 
@@ -164,27 +175,10 @@ handler(int signum, siginfo_t *si, void *ucontext)
 		die("could not protect tape memory underflow guard page:");
 }
 
-int
-main(int argc, char *argv[])
+void
+parse(cvector(Instr) instrs, const char *source)
 {
-	if unlikely (argc != 2)
-		usage(argv[0]);
-
-	int fd = open(argv[1], O_RDONLY);
-	if unlikely (fd < 0)
-		die("cannot access '%s':", argv[1]);
-
-	struct stat st;
-	fstat(fd, &st);
-
-	char *txt = emalloc(st.st_size);
-	read(fd, txt, st.st_size);
-	close(fd);
-
-	cvector(Instr) instrs = NULL;
-	cvector_reserve(instrs, (size_t)st.st_size);
-
-	for (char *s = txt; likely(*s); s++) {
+	for (const char *s = source; likely(*s); s++) {
 		Instr instr;
 		switch (*s) {
 		case '>':
@@ -267,9 +261,82 @@ main(int argc, char *argv[])
 		default: break;
 		}
 	}
+}
 
-	free(txt);
+typedef struct {
+	size_t cur_instruction;
+	size_t instr_skip_count;
+	bool   finished;
+} CodegenOptions;
 
+void
+evaluate(cvector(Instr) instrs, CodegenOptions *cg_opts)
+{
+	cvector(char) output_acc   = NULL;
+	cvector(size_t) jump_stack = NULL;
+	size_t instr_skip_count    = 0;
+	bool   finished            = false;
+
+	size_t i, evaluated_count = 0;
+	for (i = 0; likely(i < cvector_size(instrs)); i++) {
+		if (evaluated_count++ >= EVAL_LIMIT)
+			goto end_eval;
+		Instr instr = instrs[i];
+
+		switch (instr.op) {
+		case OP_MOVE: tape += instr.arg; break;
+		case OP_ADD: *tape += instr.arg % 256; break;
+		case OP_OUTPUT: cvector_push_back(output_acc, *tape); break;
+		case OP_INPUT: goto end_eval;
+		case OP_JUMP_RIGHT:
+			if likely (*tape) {
+				cvector_push_back(jump_stack, i);
+			} else {
+				int depth = 1;
+				while (depth) {
+					switch (instrs[++i].op) {
+					case OP_JUMP_RIGHT: depth += 1; break;
+					case OP_JUMP_LEFT: depth -= 1; break;
+					default:;
+					}
+				}
+			}
+			break;
+		case OP_JUMP_LEFT:
+			if unlikely (!cvector_size(jump_stack))
+				die("jump stack underflow");
+			if likely (*tape)
+				i = *cvector_back(jump_stack);
+			else
+				cvector_pop_back(jump_stack);
+			break;
+		case OP_ADD_TO: *(tape + instr.arg) += *tape; // falls through
+		case OP_CLEAR: *tape = 0; break;
+		case OP_MOVE_UNTIL:
+			while (*tape)
+				tape += instr.arg;
+			break;
+		default: __builtin_unreachable();
+		}
+		if (!cvector_size(jump_stack))
+			instr_skip_count = i;
+	}
+	finished = true;
+
+end_eval:;
+	write(STDOUT_FILENO, output_acc, cvector_size(output_acc));
+	cvector_free(output_acc);
+
+	*cg_opts = (CodegenOptions){
+		.cur_instruction  = i,
+		.instr_skip_count = instr_skip_count,
+		.finished         = finished,
+	};
+}
+
+void
+codegen(void **fn, cvector(Instr) instrs, CodegenOptions options)
+{
 	cvector(unsigned char) code = NULL;
 	cvector_reserve(code, max(cvector_size(instrs) * 5, 128));
 
@@ -281,6 +348,9 @@ main(int argc, char *argv[])
 
 	cvector(uintptr_t) uflowpatches = NULL;
 	cvector_reserve(uflowpatches, max(cvector_size(instrs) / 200, 32));
+
+	if (options.finished)
+		goto skip_jit;
 
 #define code_append(snip_)                                       \
 	do {                                                         \
@@ -308,18 +378,27 @@ main(int argc, char *argv[])
 		cvector_set_size(code, off + i);                                   \
 	} while (0)
 
-	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
-						"\x49\xbe\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r14, imm64
-						"\x48\x89\xfb";                            // mov rbx, rdi
+	unsigned char *entry = NULL;
+	{
+		const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
+							"\x49\xbe\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r14, imm64
+							"\x48\x89\xfb";                            // mov rbx, rdi
 
-	code_append(snip);
-	*(void **)(code + cvector_size(code) - 21) = stdin;
-	*(void **)(code + cvector_size(code) - 11) = stdout;
-
-	size_t icacheline                          = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+		code_append(snip);
+		*(void **)(code + cvector_size(code) - 21) = stdin;
+		*(void **)(code + cvector_size(code) - 11) = stdout;
+	}
+	{
+		const char snip[] = "\xe9\x00\x00\x00\x00"; // jmp rel32
+		code_append(snip);
+		entry = code + cvector_size(code);
+	}
+	size_t icacheline = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
 	code_align(icacheline);
 
-	for (size_t i = 0; likely(i < cvector_size(instrs)); i++) {
+	for (size_t i = options.instr_skip_count; likely(i < cvector_size(instrs)); i++) {
+		if unlikely (i == options.cur_instruction)
+			*(uint32_t *)(entry - 4) = code + cvector_size(code) - entry;
 		Instr instr = instrs[i];
 
 		switch (instr.op) {
@@ -546,36 +625,68 @@ main(int argc, char *argv[])
 	if unlikely (cvector_size(jmps) != 0)
 		die("unterminated [");
 
+skip_jit:;
 	cvector_free(instrs);
 	cvector_free(jmps);
 
 	code_append("\xc3"); // ret
 
-	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if unlikely (!fn)
+#ifdef PRINT_BUT_DONT_EXEC
+	fwrite(code, cvector_size(code), 1, stdout);
+#else
+	*fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if unlikely (!*fn)
 		die("could not allocate executable memory:");
 
 	extern int __overflow(FILE *, int);
 	for (size_t i = 0; i < cvector_size(overflowpatches); i++)
-		*(int *)&code[overflowpatches[i]] = (uintptr_t)__overflow - ((uintptr_t)fn + overflowpatches[i] + 4);
-
-	cvector_free(overflowpatches);
+		*(int *)&code[overflowpatches[i]] = (uintptr_t)__overflow - ((uintptr_t)*fn + overflowpatches[i] + 4);
 
 	extern int __uflow(FILE *);
 	for (size_t i = 0; i < cvector_size(uflowpatches); i++)
-		*(int *)&code[uflowpatches[i]] = (uintptr_t)__uflow - ((uintptr_t)fn + uflowpatches[i] + 4);
+		*(int *)&code[uflowpatches[i]] = (uintptr_t)__uflow - ((uintptr_t)*fn + uflowpatches[i] + 4);
 
-	cvector_free(uflowpatches);
-
-#ifdef PRINT_BUT_DONT_EXEC
-	fwrite(code, cvector_size(code), 1, stdout);
-
-	return 0;
+	memcpy(*fn, code, cvector_size(code));
+	mprotect(*fn, cvector_size(code), PROT_EXEC);
 #endif
 
-	memcpy(fn, code, cvector_size(code));
-	mprotect(fn, cvector_size(code), PROT_EXEC);
+	cvector_free(overflowpatches);
+	cvector_free(uflowpatches);
 	cvector_free(code);
+
+#undef code_append
+#undef code_align
+}
+
+int
+main(int argc, char *argv[])
+{
+	if unlikely (argc != 2)
+		usage(argv[0]);
+
+	int fd = open(argv[1], O_RDONLY);
+	if unlikely (fd < 0)
+		die("cannot access '%s':", argv[1]);
+
+	struct stat st;
+	fstat(fd, &st);
+
+	// ----- Read Source -----
+
+	char *txt = emalloc(st.st_size);
+	read(fd, txt, st.st_size);
+	close(fd);
+
+	// ----- Parse -----
+
+	cvector(Instr) instrs = NULL;
+	cvector_reserve(instrs, (size_t)st.st_size);
+
+	parse(instrs, txt);
+
+	free(txt);
+
+	// ----- Prepare tape -----
 
 	size_t tapesize = 30000;
 	size_t pagesize = getpagesize();
@@ -602,8 +713,22 @@ main(int argc, char *argv[])
 	if unlikely (sigaction(SIGSEGV, &sa, NULL) < 0)
 		die("could not prepare tape memory guard page:");
 
+	// ----- Preevaluate -----
+
+	CodegenOptions cg_opts = { 0 };
+	evaluate(instrs, &cg_opts);
+
+	// ----- Codegen -----
+
+	void *fn = NULL;
+	codegen(&fn, instrs, cg_opts);
+
+	// ----- Run -----
+
+#ifndef PRINT_BUT_DONT_EXEC
 	(*(void (**)(void *))&fn)(tape);
 	// leak tape on purpose
+#endif
 
 	return 0;
 }
