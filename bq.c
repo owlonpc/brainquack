@@ -204,21 +204,22 @@ main(int argc, char *argv[])
 	read(fd, txt, st.st_size);
 	close(fd);
 
-	bool  stdincomplete = isstdincomplete(&st);
-	char *stdintxt      = NULL;
+	struct stat stdin_st;
+	bool        stdin_complete = isstdincomplete(&stdin_st);
+	char       *stdin_txt      = NULL;
 
-	if (stdincomplete) {
-		if (S_ISREG(st.st_mode)) {
-			stdintxt = emalloc(st.st_size);
-			read(STDIN_FILENO, stdintxt, st.st_size);
-		} else if (S_ISFIFO(st.st_mode)) {
+	if (stdin_complete) {
+		if (S_ISREG(stdin_st.st_mode)) {
+			stdin_txt = emalloc(stdin_st.st_size);
+			read(STDIN_FILENO, stdin_txt, stdin_st.st_size);
+		} else if (S_ISFIFO(stdin_st.st_mode)) {
 			int n;
 			ioctl(STDIN_FILENO, FIONREAD, &n);
-			stdintxt = emalloc(n + 1);
-			read(STDIN_FILENO, stdintxt, n);
-			stdintxt[n] = '\0';
+			stdin_txt = emalloc(n + 1);
+			read(STDIN_FILENO, stdin_txt, n);
+			stdin_txt[n] = '\0';
 		} else {
-			stdincomplete = false;
+			stdin_complete = false;
 		}
 	}
 
@@ -349,9 +350,9 @@ main(int argc, char *argv[])
 		cvector_set_size(code, off + i);                                   \
 	} while (0)
 
-	if (stdincomplete) {
+	if (stdin_complete) {
 		code_append("\x49\xbf\x00\x00\x00\x00\x00\x00\x00\x00"); // movabs r15, imm64
-		*(void **)(code + cvector_size(code) - 8) = stdintxt;
+		*(void **)(code + cvector_size(code) - 8) = stdin_txt;
 	}
 
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
@@ -431,7 +432,7 @@ main(int argc, char *argv[])
 			break;
 		}
 		case OP_INPUT: {
-			if (!stdincomplete) {
+			if (!stdin_complete) {
 				const char snip[] = "\x49\x8b\x45\x08"     // mov  rax, QWORD PTR [r13 + 0x8]
 									"\x49\x3b\x45\x10"     // cmp  rax, QWORD PTR [r13 + 0x10]
 									"\x75\x0a"             // jne  +10
