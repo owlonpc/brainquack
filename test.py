@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-import glob, subprocess, os
+import glob, subprocess, os, sys
 
 files = glob.glob("tests/*.bf")
 pad = max(len(f) for f in files) + 1
+failed = False
 
 for f in files:
     stdout = open(f + ".stdout")
@@ -16,5 +17,8 @@ for f in files:
     status = "\033[42mPASS\033[0m" if passed else "\033[41mFAIL\033[0m"
     print(f"{f + ':':<{pad}} {status}")
     if not passed:
+        failed = True
         print(f"  expected: {repr(expected)}")
         print(f"  got:      {repr(result.stdout)}")
+
+sys.exit(1 if failed else 0)
