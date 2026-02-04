@@ -29,11 +29,14 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#define cvector_clib_malloc emalloc
-#define cvector_clib_realloc erealloc
-#include "cvector.h"
+static void *emalloc(size_t size);
+static void *erealloc(void *ptr, size_t size);
+#define DA_ALLOC emalloc
+#define DA_REALLOC erealloc
+#define DA_IMPLEMENTATION
+#include "da.h"
 
-//#define PRINT_BUT_DONT_EXEC
+// #define PRINT_BUT_DONT_EXEC
 
 #define code_trap() code_append("\xcc")
 
@@ -47,7 +50,18 @@
 static char  *tape, *tapestart, *tapeguardpages[2];
 static size_t realtapesize;
 
-typedef enum { OP_MOVE, OP_ADD, OP_OUTPUT, OP_INPUT, OP_JUMP_RIGHT, OP_JUMP_LEFT, OP_CLEAR, OP_ADD_TO, OP_MOVE_UNTIL } Opcode;
+typedef enum {
+	OP_INVALID,
+	OP_MOVE,
+	OP_ADD,
+	OP_OUTPUT,
+	OP_INPUT,
+	OP_JUMP_RIGHT,
+	OP_JUMP_LEFT,
+	OP_CLEAR,
+	OP_ADD_TO,
+	OP_MOVE_UNTIL
+} Opcode;
 
 static const char *const nops[] = {
 	"\x90",                                    // nop
@@ -66,6 +80,14 @@ typedef struct {
 	Opcode op;
 	int    arg;
 } Instr;
+
+typedef struct {
+	da_fields(Instr);
+} Instrs;
+
+typedef struct {
+	da_fields(uintptr_t);
+} UintPtrs;
 
 static inline size_t
 max(size_t a, size_t b)
@@ -223,11 +245,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	cvector(Instr) instrs = NULL;
-	cvector_reserve(instrs, (size_t)st.st_size);
-
+	Instrs instrs = { 0 };
 	for (char *s = txt; likely(*s); s++) {
-		Instr instr;
+		Instr instr = { 0 };
 		switch (*s) {
 		case '>':
 		case '<': {
@@ -240,7 +260,7 @@ main(int argc, char *argv[])
 
 			if likely (n != 0) {
 				instr = (Instr){ OP_MOVE, n };
-				cvector_push_back(instrs, instr);
+				da_append(&instrs, instr);
 			}
 
 			break;
@@ -256,103 +276,100 @@ main(int argc, char *argv[])
 
 			if likely (n != 0) {
 				instr = (Instr){ OP_ADD, n };
-				cvector_push_back(instrs, instr);
+				da_append(&instrs, instr);
 			}
 
 			break;
 		}
 		case '.':
 			instr.op = OP_OUTPUT;
-			cvector_push_back(instrs, instr);
+			da_append(&instrs, instr);
 			break;
 		case ',':
 			instr.op = OP_INPUT;
-			cvector_push_back(instrs, instr);
+			da_append(&instrs, instr);
 			break;
 		case '[':
 			instr.op = OP_JUMP_RIGHT;
-			cvector_push_back(instrs, instr);
+			da_append(&instrs, instr);
 			break;
 		case ']': {
-			size_t len = cvector_size(instrs);
+			size_t len = instrs.count;
 
 			// [-] or [+]
-			if (len >= 2 && instrs[len - 1].op == OP_ADD && instrs[len - 1].arg & 1 && instrs[len - 2].op == OP_JUMP_RIGHT) {
-				cvector_set_size(instrs, len - 2);
-				instr.op = OP_CLEAR;
-				cvector_push_back(instrs, instr);
+			if (len >= 2 && instrs.items[len - 1].op == OP_ADD && instrs.items[len - 1].arg & 1 &&
+			    instrs.items[len - 2].op == OP_JUMP_RIGHT) {
+				instrs.count = len - 2;
+				instr.op     = OP_CLEAR;
+				da_append(&instrs, instr);
 				break;
 			}
 
 			// [->+<] or [-<+>]
-			if (len >= 5 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_ADD && instrs[len - 2].arg == 1 &&
-			    instrs[len - 3].op == OP_MOVE && instrs[len - 4].op == OP_ADD && instrs[len - 4].arg == -1 &&
-			    instrs[len - 1].arg == -instrs[len - 3].arg && instrs[len - 5].op == OP_JUMP_RIGHT) {
-				cvector_set_size(instrs, len - 5);
-				instr = (Instr){ OP_ADD_TO, instrs[len - 3].arg };
-				cvector_push_back(instrs, instr);
+			if (len >= 5 && instrs.items[len - 1].op == OP_MOVE && instrs.items[len - 2].op == OP_ADD &&
+			    instrs.items[len - 2].arg == 1 && instrs.items[len - 3].op == OP_MOVE && instrs.items[len - 4].op == OP_ADD &&
+			    instrs.items[len - 4].arg == -1 && instrs.items[len - 1].arg == -instrs.items[len - 3].arg &&
+			    instrs.items[len - 5].op == OP_JUMP_RIGHT) {
+				instrs.count = len - 5;
+				instr        = (Instr){ OP_ADD_TO, instrs.items[len - 3].arg };
+				da_append(&instrs, instr);
 				break;
 			}
 
 			// [>] or [<]
-			if (len >= 2 && instrs[len - 1].op == OP_MOVE && instrs[len - 2].op == OP_JUMP_RIGHT) {
-				cvector_set_size(instrs, len - 2);
-				instr = (Instr){ OP_MOVE_UNTIL, instrs[len - 1].arg };
-				cvector_push_back(instrs, instr);
+			if (len >= 2 && instrs.items[len - 1].op == OP_MOVE && instrs.items[len - 2].op == OP_JUMP_RIGHT) {
+				instrs.count = len - 2;
+				instr        = (Instr){ OP_MOVE_UNTIL, instrs.items[len - 1].arg };
+				da_append(&instrs, instr);
 				break;
 			}
 
 			instr.op = OP_JUMP_LEFT;
-			cvector_push_back(instrs, instr);
+			da_append(&instrs, instr);
 			break;
 		}
+		case OP_INVALID: __builtin_unreachable();
 		default: break;
 		}
 	}
 
 	free(txt);
 
-	cvector(unsigned char) code = NULL;
-	cvector_reserve(code, max(cvector_size(instrs) * 5, 128));
+	StringBuilder code = { 0 };
+	da_reserve(&code, max(instrs.count * 5, DA_INIT_CAP));
 
-	cvector(uintptr_t) jmps = NULL;
-	cvector_reserve(jmps, max(cvector_size(instrs) / 20, 16));
+	UintPtrs jmps = { 0 };
+	da_reserve(&code, max(instrs.count / 20, 16));
 
-	cvector(uintptr_t) putcharpatches = NULL;
-	cvector_reserve(putcharpatches, max(cvector_size(instrs) / 100, 64));
+	UintPtrs putcharpatches = { 0 };
+	da_reserve(&code, max(instrs.count / 100, 64));
 
-	cvector(uintptr_t) getcharpatches = NULL;
-	cvector_reserve(getcharpatches, max(cvector_size(instrs) / 200, 32));
+	UintPtrs getcharpatches = { 0 };
+	da_reserve(&code, max(instrs.count / 200, 32));
 
-#define code_append(snip_)                                       \
-	do {                                                         \
-		size_t snip_size_ = sizeof snip_ / sizeof *snip_ - 1;    \
-		cvector_reserve(code, cvector_size(code) + snip_size_);  \
-		memcpy(code + cvector_size(code), snip_, snip_size_);    \
-		cvector_set_size(code, cvector_size(code) + snip_size_); \
-	} while (0)
+#define code_append(snip_) da_append_many(&code, snip_, sizeof(snip_) / sizeof(*snip_) - 1)
 
 #define code_align(align)                                                  \
 	do {                                                                   \
 		if (align <= 1)                                                    \
 			break;                                                         \
-		uintptr_t cur = (uintptr_t)(code + cvector_size(code));            \
+		size_t    off = code.count;                                        \
+		uintptr_t cur = (uintptr_t)(code.items + off);                     \
 		size_t    pad = ((align) - (cur & ((align) - 1))) & ((align) - 1); \
-		size_t    off = cvector_size(code);                                \
-		cvector_reserve(code, off + pad);                                  \
+		da_reserve(&code, off + pad);                                      \
 		size_t i = 0;                                                      \
 		while (pad > 0) {                                                  \
 			size_t nopsize = pad > 10 ? 10 : pad;                          \
-			memcpy(code + off + i, nops[nopsize - 1], nopsize);            \
+			memcpy(code.items + off + i, nops[nopsize - 1], nopsize);      \
 			i += nopsize;                                                  \
 			pad -= nopsize;                                                \
 		}                                                                  \
-		cvector_set_size(code, off + i);                                   \
+		code.count = off + i;                                              \
 	} while (0)
 
 	if (stdin_complete) {
 		code_append("\x49\xbf\x00\x00\x00\x00\x00\x00\x00\x00"); // movabs r15, imm64
-		*(void **)(code + cvector_size(code) - 8) = stdin_txt;
+		*(char **)da_at(&code, -8) = stdin_txt;
 	}
 
 	const char snip[] = "\x49\xbd\x00\x00\x00\x00\x00\x00\x00\x00" // movabs r13, imm64
@@ -360,14 +377,14 @@ main(int argc, char *argv[])
 						"\x48\x89\xfb";                            // mov rbx, rdi
 
 	code_append(snip);
-	*(void **)(code + cvector_size(code) - 21) = stdin;
-	*(void **)(code + cvector_size(code) - 11) = stdout;
+	*(void **)da_at(&code, -21) = stdin;
+	*(void **)da_at(&code, -11) = stdout;
 
-	size_t icacheline                          = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+	size_t icacheline           = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
 	code_align(icacheline);
 
-	for (size_t i = 0; likely(i < cvector_size(instrs)); i++) {
-		Instr instr = instrs[i];
+	for (size_t i = 0; likely(i < instrs.count); i++) {
+		Instr instr = instrs.items[i];
 
 		switch (instr.op) {
 		case OP_MOVE:
@@ -380,20 +397,20 @@ main(int argc, char *argv[])
 
 				if likely (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xc3\x00"); // add rbx, imm8
-					code[cvector_size(code) - 1] = n;
+					*da_at(&code, -1) = n;
 				} else {
 					code_append("\x48\x81\xc3\x00\x00\x00\x00"); // add rbx, imm32
-					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+					*da_at(&code, -4) = n;
 				}
 			} else if (instr.arg < 0) {
 				unsigned int n = -instr.arg;
 
 				if (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xeb\x00"); // sub rbx, imm8
-					code[cvector_size(code) - 1] = n;
+					*da_at(&code, -1) = n;
 				} else {
 					code_append("\x48\x81\xeb\x00\x00\x00\x00"); // sub rbx, imm32
-					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+					*(unsigned int *)da_at(&code, -4) = n;
 				}
 			}
 			break;
@@ -406,10 +423,10 @@ main(int argc, char *argv[])
 				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
 			else if (n > 0) {
 				code_append("\x80\x03\x00"); // add BYTE PTR [rbx], imm8
-				code[cvector_size(code) - 1] = n;
+				*da_at(&code, -1) = n;
 			} else if (n < 0) {
 				code_append("\x80\x2b\x00"); // sub BYTE PTR [rbx], imm8
-				code[cvector_size(code) - 1] = -n;
+				*da_at(&code, -1) = -n;
 			}
 
 			break;
@@ -418,7 +435,7 @@ main(int argc, char *argv[])
 			const char snip[] = "\x48\x0f\xbe\x3b"      // movsx rdi, BYTE PTR [rbx]
 								"\xe8\x00\x00\x00\x00"; // call  rel32
 
-			cvector_push_back(putcharpatches, cvector_size(code) + 5);
+			da_append(&putcharpatches, code.count + 5);
 			code_append(snip);
 			break;
 		}
@@ -426,7 +443,7 @@ main(int argc, char *argv[])
 			if (!stdin_complete) {
 				const char snip[] = "\xe8\x00\x00\x00\x00" // call rel32
 									"\x88\x03";            // mov  BYTE PTR [rbx], al
-				cvector_push_back(getcharpatches, cvector_size(code) + 1);
+				da_append(&getcharpatches, code.count + 1);
 				code_append(snip);
 			} else {
 				const char snip[] = "\x41\x8a\07"   // mov al, BYTE PTR [r15]
@@ -442,9 +459,9 @@ main(int argc, char *argv[])
 								"\x0f\x1f\x40\x00"; // nop DWORD PTR [eax+0x0]
 
 			size_t cost         = 0;
-			size_t jmpstraverse = cvector_size(jmps) + 1;
-			for (size_t j = i; jmpstraverse && likely(j < cvector_size(instrs)); j++)
-				switch (instrs[j].op) {
+			size_t jmpstraverse = jmps.count + 1;
+			for (size_t j = i; jmpstraverse && likely(j < instrs.count); j++)
+				switch (instrs.items[j].op) {
 				case OP_MOVE: cost += 3; break;
 				case OP_ADD: cost += 1; break;
 				case OP_OUTPUT: cost += 40; break;
@@ -457,42 +474,42 @@ main(int argc, char *argv[])
 				case OP_CLEAR: cost += 2; break;
 				case OP_ADD_TO: cost += 10; break;
 				case OP_MOVE_UNTIL: cost += 10; break;
+				case OP_INVALID: break;
 				}
 
-			code_align(icacheline >> ((cvector_size(jmps) + 1) * cost / 50));
+			code_align(icacheline >> ((jmps.count + 1) * cost / 50));
 			code_append(snip);
-			cvector_push_back(jmps, cvector_size(code));
+			da_append(&jmps, code.count);
 			break;
 		}
 		case OP_JUMP_LEFT: {
 			code_append("\x80\x3b\x00"); // cmp BYTE PTR [rbx], 0
 
-			if unlikely (cvector_size(jmps) == 0)
+			if unlikely (jmps.count == 0)
 				die("mismatched ]");
 
-			size_t jmp = jmps[cvector_size(jmps) - 1];
-			cvector_pop_back(jmps);
+			size_t jmp = da_pop(&jmps);
 
 			{
-				int rel = jmp - (cvector_size(code) + 2);
+				int rel = jmp - (code.count + 2);
 
 				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
 					code_append("\x75\x00"); // jnz rel8
-					code[cvector_size(code) - 1] = rel;
+					*da_at(&code, -1) = rel;
 				} else {
 					code_append("\x0f\x85\x00\x00\x00\x00"); // jnz rel32
-					*(int *)(code + cvector_size(code) - 4) = rel - 4;
+					*(int *)da_at(&code, -4) = rel - 4;
 				}
 			}
 
 			{
-				int rel = cvector_size(code) - jmp;
+				int rel = code.count - jmp;
 
 				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
-					code[jmp - 6] = 0x74; // jz rel8
-					code[jmp - 5] = rel + 4;
+					code.items[jmp - 6] = 0x74; // jz rel8
+					code.items[jmp - 5] = rel + 4;
 				} else {
-					*(int *)(code + jmp - 4) = rel; // rel32
+					*(int *)&code.items[jmp - 4] = rel; // rel32
 				}
 			}
 
@@ -508,14 +525,14 @@ main(int argc, char *argv[])
 									"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
 
 				code_append(snip);
-				code[cvector_size(code) - 4] = instr.arg;
+				*da_at(&code, -4) = instr.arg;
 			} else {
 				const char snip[] = "\x8a\x03"                 // mov al, BYTE PTR [rbx]
 									"\x00\x83\x00\x00\x00\x00" // add BYTE PTR [rbx + disp32], al
 									"\xc6\x03\x00";            // mov BYTE PTR [rbx], 0
 
 				code_append(snip);
-				*(int *)(code + cvector_size(code) - 7) = instr.arg;
+				*(int *)da_at(&code, 7) = instr.arg;
 			}
 			break;
 		}
@@ -544,7 +561,7 @@ main(int argc, char *argv[])
 										"\xeb\xf5";        // jmp -11
 
 					code_append(snip);
-					code[cvector_size(code) - 3] = n;
+					*da_at(&code, -3) = n;
 				} else {
 					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
 										"\x74\x09"                     // je  +9
@@ -552,7 +569,7 @@ main(int argc, char *argv[])
 										"\xeb\xf2";                    // jmp -14
 
 					code_append(snip);
-					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+					*(unsigned int *)da_at(&code, -6) = n;
 				}
 			} else if (instr.arg < -1) {
 				unsigned int n = -instr.arg;
@@ -564,7 +581,7 @@ main(int argc, char *argv[])
 										"\xeb\xf5";        // jmp -11
 
 					code_append(snip);
-					code[cvector_size(code) - 3] = n;
+					*da_at(&code, -3) = n;
 				} else {
 					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
 										"\x74\x09"                     // je  +9
@@ -572,44 +589,47 @@ main(int argc, char *argv[])
 										"\xeb\xf2";                    // jmp -14
 
 					code_append(snip);
-					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+					*(unsigned int *)da_at(&code, -6) = n;
 				}
 			}
 			break;
+		case OP_INVALID: __builtin_unreachable();
 		}
 	}
 
-	if unlikely (cvector_size(jmps) != 0)
+	if unlikely (jmps.count != 0)
 		die("unterminated [");
 
-	cvector_free(instrs);
-	cvector_free(jmps);
+	da_free(&instrs);
+	da_free(&jmps);
 
 	code_append("\xc3"); // ret
 
-	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	void *fn = mmap(NULL, code.count, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if unlikely (!fn)
 		die("could not allocate executable memory:");
 
-	for (size_t i = 0; i < cvector_size(putcharpatches); i++)
-		*(int *)&code[putcharpatches[i]] = (uintptr_t)putchar_unlocked - ((uintptr_t)fn + putcharpatches[i] + 4);
+	for (size_t i = 0; i < putcharpatches.count; i++)
+		*(int *)&code.items[putcharpatches.items[i]] =
+				(uintptr_t)putchar_unlocked - ((uintptr_t)fn + putcharpatches.items[i] + 4);
 
-	cvector_free(putcharpatches);
+	da_free(&putcharpatches);
 
-	for (size_t i = 0; i < cvector_size(getcharpatches); i++)
-		*(int *)&code[getcharpatches[i]] = (uintptr_t)getchar_unlocked - ((uintptr_t)fn + getcharpatches[i] + 4);
+	for (size_t i = 0; i < getcharpatches.count; i++)
+		*(int *)&code.items[getcharpatches.items[i]] =
+				(uintptr_t)getchar_unlocked - ((uintptr_t)fn + getcharpatches.items[i] + 4);
 
-	cvector_free(getcharpatches);
+	da_free(&getcharpatches);
 
 #ifdef PRINT_BUT_DONT_EXEC
-	fwrite(code, cvector_size(code), 1, stdout);
+	fwrite(code, code.count, 1, stdout);
 
 	return 0;
 #endif
 
-	memcpy(fn, code, cvector_size(code));
-	mprotect(fn, cvector_size(code), PROT_EXEC);
-	cvector_free(code);
+	memcpy(fn, code.items, code.count);
+	mprotect(fn, code.count, PROT_EXEC);
+	da_free(&code);
 
 	size_t tapesize = 30000;
 	size_t pagesize = getpagesize();
