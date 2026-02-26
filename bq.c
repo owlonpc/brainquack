@@ -312,36 +312,38 @@ main(int argc, char *argv[])
 
 	free(txt);
 
-	cvector(unsigned char) code = NULL;
-	cvector_reserve(code, max(cvector_size(instrs) * 5, 128));
+	size_t         codemapsize = max(cvector_size(instrs) * 64, 1);
+	unsigned char *fn          = mmap(NULL, codemapsize, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if unlikely (!fn)
+		die("could not allocate executable memory:");
+
+	size_t codesize         = 0;
 
 	cvector(uintptr_t) jmps = NULL;
 	cvector_reserve(jmps, max(cvector_size(instrs) / 20, 16));
 
-#define code_append(snip_)                                       \
-	do {                                                         \
-		size_t snip_size_ = sizeof snip_ / sizeof *snip_ - 1;    \
-		cvector_reserve(code, cvector_size(code) + snip_size_);  \
-		memcpy(code + cvector_size(code), snip_, snip_size_);    \
-		cvector_set_size(code, cvector_size(code) + snip_size_); \
+#define code_append(snip_)                                    \
+	do {                                                      \
+		size_t snip_size_ = sizeof snip_ / sizeof *snip_ - 1; \
+		memcpy(fn + codesize, snip_, snip_size_);             \
+		codesize += snip_size_;                               \
 	} while (0)
 
 #define code_align(align)                                                  \
 	do {                                                                   \
-		if (align <= 1)                                                    \
+		if ((align) <= 1)                                                  \
 			break;                                                         \
-		uintptr_t cur = (uintptr_t)(code + cvector_size(code));            \
+		uintptr_t cur = (uintptr_t)(fn + codesize);                        \
 		size_t    pad = ((align) - (cur & ((align) - 1))) & ((align) - 1); \
-		size_t    off = cvector_size(code);                                \
-		cvector_reserve(code, off + pad);                                  \
-		size_t i = 0;                                                      \
+		size_t    off = codesize;                                          \
+		size_t    i   = 0;                                                 \
 		while (pad > 0) {                                                  \
 			size_t nopsize = pad > 10 ? 10 : pad;                          \
-			memcpy(code + off + i, nops[nopsize - 1], nopsize);            \
+			memcpy(fn + off + i, nops[nopsize - 1], nopsize);              \
 			i += nopsize;                                                  \
 			pad -= nopsize;                                                \
 		}                                                                  \
-		cvector_set_size(code, off + i);                                   \
+		codesize = off + i;                                                \
 	} while (0)
 
 	size_t icacheline      = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
@@ -361,10 +363,10 @@ main(int argc, char *argv[])
 	            "\x4c\x89\xe2"                 // mov    rdx,r12
 	            "\x0f\x05"                     // syscall
 	            "\x45\x31\xe4"                 // xor    r12d,r12d
-	            "\xc3");                       // ret);
+	            "\xc3");                       // ret
 
 	code_align(icacheline);
-	size_t mygetcharoffset = cvector_size(code);
+	size_t mygetcharoffset = codesize;
 	code_append("\x49\x81\xfd\x00\x10\x00\x00"         // cmp    r13,0x1000
 	            "\x75\x16"                             // jne    have_data
 	            "\x31\xc0"                             // xor    eax,eax
@@ -379,11 +381,11 @@ main(int argc, char *argv[])
 	            "\xc3");                               // ret
 
 	code_align(icacheline);
-	size_t codestartoffset = cvector_size(code);
+	size_t codestartoffset = codesize;
 
 	if (stdin_complete) {
 		code_append("\x49\xbf\x00\x00\x00\x00\x00\x00\x00\x00"); // movabs r15, imm64
-		*(void **)(code + cvector_size(code) - 8) = stdin_txt;
+		*(void **)(fn + codesize - 8) = stdin_txt;
 	}
 
 	code_append("\x48\x81\xec\x00\x20\x00\x00" // sub rsp,0x2000
@@ -407,20 +409,20 @@ main(int argc, char *argv[])
 
 				if likely (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xc3\x00"); // add rbx, imm8
-					code[cvector_size(code) - 1] = n;
+					fn[codesize - 1] = n;
 				} else {
 					code_append("\x48\x81\xc3\x00\x00\x00\x00"); // add rbx, imm32
-					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+					*(unsigned int *)(fn + codesize - 4) = n;
 				}
 			} else if (instr.arg < 0) {
 				unsigned int n = -instr.arg;
 
 				if (n <= UCHAR_MAX) {
 					code_append("\x48\x83\xeb\x00"); // sub rbx, imm8
-					code[cvector_size(code) - 1] = n;
+					fn[codesize - 1] = n;
 				} else {
 					code_append("\x48\x81\xeb\x00\x00\x00\x00"); // sub rbx, imm32
-					*(unsigned int *)(code + cvector_size(code) - 4) = n;
+					*(unsigned int *)(fn + codesize - 4) = n;
 				}
 			}
 			break;
@@ -433,25 +435,25 @@ main(int argc, char *argv[])
 				code_append("\xfe\x0b"); // dec BYTE PTR [rbx]
 			else if (n > 0) {
 				code_append("\x80\x03\x00"); // add BYTE PTR [rbx], imm8
-				code[cvector_size(code) - 1] = n;
+				fn[codesize - 1] = n;
 			} else if (n < 0) {
 				code_append("\x80\x2b\x00"); // sub BYTE PTR [rbx], imm8
-				code[cvector_size(code) - 1] = -n;
+				fn[codesize - 1] = -n;
 			}
 
 			break;
 		}
 		case OP_OUTPUT: {
 			code_append("\xe8\x00\x00\x00\x00"); // call rel32
-			*(int *)(code + cvector_size(code) - 4) = myputcharoffset - cvector_size(code);
+			*(int *)(fn + codesize - 4) = myputcharoffset - codesize;
 			break;
 		}
 		case OP_INPUT: {
 			if (!stdin_complete) {
 				code_append("\xe8\x00\x00\x00\x00"); // call rel32
-				*(int *)(code + cvector_size(code) - 4) = mygetcharoffset - cvector_size(code);
+				*(int *)(fn + codesize - 4) = mygetcharoffset - codesize;
 			} else {
-				const char snip[] = "\x41\x8a\07"   // mov al, BYTE PTR [r15]
+				const char snip[] = "\x41\x8a\x07"  // mov al, BYTE PTR [r15]
 									"\x88\x03"      // mov BYTE PTR [rbx], al
 									"\x49\xff\xc7"; // inc r15
 				code_append(snip);
@@ -483,7 +485,7 @@ main(int argc, char *argv[])
 
 			code_align(icacheline >> ((cvector_size(jmps) + 1) * cost / 50));
 			code_append(snip);
-			cvector_push_back(jmps, cvector_size(code));
+			cvector_push_back(jmps, codesize);
 			break;
 		}
 		case OP_JUMP_LEFT: {
@@ -496,25 +498,25 @@ main(int argc, char *argv[])
 			cvector_pop_back(jmps);
 
 			{
-				int rel = jmp - (cvector_size(code) + 2);
+				int rel = jmp - (codesize + 2);
 
 				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
 					code_append("\x75\x00"); // jnz rel8
-					code[cvector_size(code) - 1] = rel;
+					fn[codesize - 1] = rel;
 				} else {
 					code_append("\x0f\x85\x00\x00\x00\x00"); // jnz rel32
-					*(int *)(code + cvector_size(code) - 4) = rel - 4;
+					*(int *)(fn + codesize - 4) = rel - 4;
 				}
 			}
 
 			{
-				int rel = cvector_size(code) - jmp;
+				int rel = codesize - jmp;
 
 				if likely (rel >= CHAR_MIN && rel <= CHAR_MAX) {
-					code[jmp - 6] = 0x74; // jz rel8
-					code[jmp - 5] = rel + 4;
+					fn[jmp - 6] = 0x74; // jz rel8
+					fn[jmp - 5] = rel + 4;
 				} else {
-					*(int *)(code + jmp - 4) = rel; // rel32
+					*(int *)(fn + jmp - 4) = rel; // rel32
 				}
 			}
 
@@ -530,14 +532,14 @@ main(int argc, char *argv[])
 									"\xc6\x03\x00"; // mov BYTE PTR [rbx], 0
 
 				code_append(snip);
-				code[cvector_size(code) - 4] = instr.arg;
+				fn[codesize - 4] = instr.arg;
 			} else {
 				const char snip[] = "\x8a\x03"                 // mov al, BYTE PTR [rbx]
 									"\x00\x83\x00\x00\x00\x00" // add BYTE PTR [rbx + disp32], al
 									"\xc6\x03\x00";            // mov BYTE PTR [rbx], 0
 
 				code_append(snip);
-				*(int *)(code + cvector_size(code) - 7) = instr.arg;
+				*(int *)(fn + codesize - 7) = instr.arg;
 			}
 			break;
 		}
@@ -566,7 +568,7 @@ main(int argc, char *argv[])
 										"\xeb\xf5";        // jmp -11
 
 					code_append(snip);
-					code[cvector_size(code) - 3] = n;
+					fn[codesize - 3] = n;
 				} else {
 					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
 										"\x74\x09"                     // je  +9
@@ -574,7 +576,7 @@ main(int argc, char *argv[])
 										"\xeb\xf2";                    // jmp -14
 
 					code_append(snip);
-					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+					*(unsigned int *)(fn + codesize - 6) = n;
 				}
 			} else if (instr.arg < -1) {
 				unsigned int n = -instr.arg;
@@ -586,7 +588,7 @@ main(int argc, char *argv[])
 										"\xeb\xf5";        // jmp -11
 
 					code_append(snip);
-					code[cvector_size(code) - 3] = n;
+					fn[codesize - 3] = n;
 				} else {
 					const char snip[] = "\x80\x3b\x00"                 // cmp BYTE PTR [rbx], 0
 										"\x74\x09"                     // je  +9
@@ -594,7 +596,7 @@ main(int argc, char *argv[])
 										"\xeb\xf2";                    // jmp -14
 
 					code_append(snip);
-					*(unsigned int *)(code + cvector_size(code) - 6) = n;
+					*(unsigned int *)(fn + codesize - 6) = n;
 				}
 			}
 			break;
@@ -607,30 +609,23 @@ main(int argc, char *argv[])
 	cvector_free(instrs);
 	cvector_free(jmps);
 
-	code_append("\x4d\x85\xe4"                // test r12,r12
-	            "\x74\x11"                    // je 16
-	            "\x48\x31\xc0"                // xor rax,rax
-	            "\x48\xff\xc0"                // inc rax
-	            "\x48\x89\xc7"                // mov rdi,rax
-	            "\x48\x89\xe6"                // mov rsi,rsp
-	            "\x4c\x89\xe2"                // mov rdx,r12
-	            "\x0f\x05"                    // syscall
-	            "\x48\x81\xc4\00\x20\x00\x00" // add rsp,0x2000
-	            "\xc3");                      // ret
-
-	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if unlikely (!fn)
-		die("could not allocate executable memory:");
+	code_append("\x4d\x85\xe4"                 // test r12,r12
+	            "\x74\x11"                     // je 16
+	            "\x48\x31\xc0"                 // xor rax,rax
+	            "\x48\xff\xc0"                 // inc rax
+	            "\x48\x89\xc7"                 // mov rdi,rax
+	            "\x48\x89\xe6"                 // mov rsi,rsp
+	            "\x4c\x89\xe2"                 // mov rdx,r12
+	            "\x0f\x05"                     // syscall
+	            "\x48\x81\xc4\x00\x20\x00\x00" // add rsp,0x2000
+	            "\xc3");                       // ret
 
 #ifdef PRINT_BUT_DONT_EXEC
-	fwrite(code, cvector_size(code), 1, stdout);
-
+	fwrite(fn, codesize, 1, stdout);
 	return 0;
 #endif
 
-	memcpy(fn, code, cvector_size(code));
-	mprotect(fn, cvector_size(code), PROT_EXEC);
-	cvector_free(code);
+	mprotect(fn, codemapsize, PROT_EXEC);
 
 	size_t tapesize = 30000;
 	size_t pagesize = getpagesize();
@@ -657,7 +652,7 @@ main(int argc, char *argv[])
 	if unlikely (sigaction(SIGSEGV, &sa, NULL) < 0)
 		die("could not prepare tape memory guard page:");
 
-	((void (*)(void *))((uintptr_t)fn + codestartoffset))(tape);
+	((void (*)(void *))(uintptr_t)(fn + codestartoffset))(tape);
 	// leak tape on purpose
 
 	return 0;
