@@ -318,12 +318,6 @@ main(int argc, char *argv[])
 	cvector(uintptr_t) jmps = NULL;
 	cvector_reserve(jmps, max(cvector_size(instrs) / 20, 16));
 
-	cvector(uintptr_t) putcharpatches = NULL;
-	cvector_reserve(putcharpatches, max(cvector_size(instrs) / 100, 64));
-
-	cvector(uintptr_t) getcharpatches = NULL;
-	cvector_reserve(getcharpatches, max(cvector_size(instrs) / 200, 32));
-
 #define code_append(snip_)                                       \
 	do {                                                         \
 		size_t snip_size_ = sizeof snip_ / sizeof *snip_ - 1;    \
@@ -350,6 +344,43 @@ main(int argc, char *argv[])
 		cvector_set_size(code, off + i);                                   \
 	} while (0)
 
+	size_t icacheline      = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+
+	size_t myputcharoffset = 0;
+	code_append("\x0f\xb6\x03"                 // movzx  eax,BYTE PTR [rbx]
+	            "\x42\x88\x44\x24\x08"         // mov    BYTE PTR [rsp+r12*1+8],al
+	            "\x49\xff\xc4"                 // inc    r12
+	            "\x3c\x0a"                     // cmp    al,0xa
+	            "\x74\x09"                     // je     flush
+	            "\x49\x81\xfc\x00\x10\x00\x00" // cmp    r12,0x1000
+	            "\x75\x16"                     // jne    done
+	            "\x48\x31\xc0"                 // xor    rax,rax
+	            "\x48\xff\xc0"                 // inc    rax
+	            "\x48\x89\xc7"                 // mov    rdi,rax
+	            "\x48\x8d\x74\x24\x08"         // lea    rsi,[rsp+8]
+	            "\x4c\x89\xe2"                 // mov    rdx,r12
+	            "\x0f\x05"                     // syscall
+	            "\x45\x31\xe4"                 // xor    r12d,r12d
+	            "\xc3");                       // ret);
+
+	code_align(icacheline);
+	size_t mygetcharoffset = cvector_size(code);
+	code_append("\x49\x81\xfd\x00\x10\x00\x00"         // cmp    r13,0x1000
+	            "\x75\x16"                             // jne    have_data
+	            "\x31\xc0"                             // xor    eax,eax
+	            "\x31\xff"                             // xor    edi,edi
+	            "\x48\x8d\xb4\x24\x08\x10\x00\x00"     // lea    rsi,[rsp+0x1008]
+	            "\xba\x00\x10\x00\x00"                 // mov    edx,0x1000
+	            "\x0f\x05"                             // syscall
+	            "\x45\x31\xed"                         // xor    r13d,r13d
+	            "\x42\x0f\xb6\x84\x2c\x08\x10\x00\x00" // movzx  eax,BYTE PTR [rsp+r13*1+0x1008]
+	            "\x88\x03"                             // mov    BYTE PTR [rbx],al
+	            "\x49\xff\xc5"                         // inc    r13
+	            "\xc3");                               // ret
+
+	code_align(icacheline);
+	size_t codestartoffset = cvector_size(code);
+
 	if (stdin_complete) {
 		code_append("\x49\xbf\x00\x00\x00\x00\x00\x00\x00\x00"); // movabs r15, imm64
 		*(void **)(code + cvector_size(code) - 8) = stdin_txt;
@@ -360,7 +391,6 @@ main(int argc, char *argv[])
 	            "\x49\xc7\xc5\x00\x10\x00\x00" // mov r13,0x1000
 	            "\x48\x89\xfb");               // mov rbx, rdi
 
-	size_t icacheline = sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
 	code_align(icacheline);
 
 	for (size_t i = 0; likely(i < cvector_size(instrs)); i++) {
@@ -412,16 +442,14 @@ main(int argc, char *argv[])
 			break;
 		}
 		case OP_OUTPUT: {
-			const char snip[] = "\xe8\x00\x00\x00\x00"; // call rel32
-			cvector_push_back(putcharpatches, cvector_size(code) + 1);
-			code_append(snip);
+			code_append("\xe8\x00\x00\x00\x00"); // call rel32
+			*(int *)(code + cvector_size(code) - 4) = myputcharoffset - cvector_size(code);
 			break;
 		}
 		case OP_INPUT: {
 			if (!stdin_complete) {
-				const char snip[] = "\xe8\x00\x00\x00\x00"; // call rel32
-				cvector_push_back(getcharpatches, cvector_size(code) + 1);
-				code_append(snip);
+				code_append("\xe8\x00\x00\x00\x00"); // call rel32
+				*(int *)(code + cvector_size(code) - 4) = mygetcharoffset - cvector_size(code);
 			} else {
 				const char snip[] = "\x41\x8a\07"   // mov al, BYTE PTR [r15]
 									"\x88\x03"      // mov BYTE PTR [rbx], al
@@ -590,52 +618,9 @@ main(int argc, char *argv[])
 	            "\x48\x81\xc4\00\x20\x00\x00" // add rsp,0x2000
 	            "\xc3");                      // ret
 
-	code_align(icacheline);
-	size_t myputcharoffset = cvector_size(code);
-	code_append("\x0f\xb6\x03"                 // movzx  eax,BYTE PTR [rbx]
-	            "\x42\x88\x44\x24\x08"         // mov    BYTE PTR [rsp+r12*1+8],al
-	            "\x49\xff\xc4"                 // inc    r12
-	            "\x3c\x0a"                     // cmp    al,0xa
-	            "\x74\x09"                     // je     flush
-	            "\x49\x81\xfc\x00\x10\x00\x00" // cmp    r12,0x1000
-	            "\x75\x16"                     // jne    done
-	            "\x48\x31\xc0"                 // xor    rax,rax
-	            "\x48\xff\xc0"                 // inc    rax
-	            "\x48\x89\xc7"                 // mov    rdi,rax
-	            "\x48\x8d\x74\x24\x08"         // lea    rsi,[rsp+8]
-	            "\x4c\x89\xe2"                 // mov    rdx,r12
-	            "\x0f\x05"                     // syscall
-	            "\x45\x31\xe4"                 // xor    r12d,r12d
-	            "\xc3");                       // ret);
-
-	code_align(icacheline);
-	size_t mygetcharoffset = cvector_size(code);
-	code_append("\x49\x81\xfd\x00\x10\x00\x00"         // cmp    r13,0x1000
-	            "\x75\x16"                             // jne    have_data
-	            "\x31\xc0"                             // xor    eax,eax
-	            "\x31\xff"                             // xor    edi,edi
-	            "\x48\x8d\xb4\x24\x08\x10\x00\x00"     // lea    rsi,[rsp+0x1008]
-	            "\xba\x00\x10\x00\x00"                 // mov    edx,0x1000
-	            "\x0f\x05"                             // syscall
-	            "\x45\x31\xed"                         // xor    r13d,r13d
-	            "\x42\x0f\xb6\x84\x2c\x08\x10\x00\x00" // movzx  eax,BYTE PTR [rsp+r13*1+0x1008]
-	            "\x88\x03"                             // mov    BYTE PTR [rbx],al
-	            "\x49\xff\xc5"                         // inc    r13
-	            "\xc3");                               // ret
-
 	void *fn = mmap(NULL, cvector_size(code), PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if unlikely (!fn)
 		die("could not allocate executable memory:");
-
-	for (size_t i = 0; i < cvector_size(putcharpatches); i++)
-		*(int *)&code[putcharpatches[i]] = myputcharoffset - (putcharpatches[i] + 4);
-
-	cvector_free(putcharpatches);
-
-	for (size_t i = 0; i < cvector_size(getcharpatches); i++)
-		*(int *)&code[getcharpatches[i]] = mygetcharoffset - (getcharpatches[i] + 4);
-
-	cvector_free(getcharpatches);
 
 #ifdef PRINT_BUT_DONT_EXEC
 	fwrite(code, cvector_size(code), 1, stdout);
@@ -672,7 +657,7 @@ main(int argc, char *argv[])
 	if unlikely (sigaction(SIGSEGV, &sa, NULL) < 0)
 		die("could not prepare tape memory guard page:");
 
-	(*(void (**)(void *))&fn)(tape);
+	((void (*)(void *))((uintptr_t)fn + codestartoffset))(tape);
 	// leak tape on purpose
 
 	return 0;
